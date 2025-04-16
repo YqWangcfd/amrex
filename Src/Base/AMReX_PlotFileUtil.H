@@ -197,4 +197,54 @@ namespace amrex
     };
 }
 
+namespace amrex
+{
+    void WriteMultiLevelPlotfile_SD(const std::string& plotfilename, int nlevels,
+                                    const Vector<const MultiFab*>& mf,
+                                    const Vector<std::string>& varnames,
+                                    const Vector<Geometry>& geom, Real time,
+                                    const Vector<int>& level_steps,
+                                    const Vector<IntVect>& ref_ratio,
+                                    const std::string &versionName = "HyperCLaw-V1.1",
+                                    const std::string &levelPrefix = "Level_",
+                                    const std::string &mfPrefix = "Cell",
+                                    const Vector<std::string>& extra_dirs = Vector<std::string>());
+
+    void WriteSingleLevelPlotfile_SD (const std::string& plotfilename,
+                            const MultiFab& mf, const Vector<std::string>& varnames,
+                            const Geometry& geom, Real time, int level_step,
+                            const std::string &versionName = "HyperCLaw-V1.1",
+                            const std::string &levelPrefix = "Level_",
+                            const std::string &mfPrefix = "Cell",
+                            const Vector<std::string>& extra_dirs = Vector<std::string>());
+
+    void WriteMultiLevelPlotfileWithTerrain (const std::string &plotfilename,
+                                             int nlevels,
+                                             const amrex::Vector<const amrex::MultiFab*> &mf,
+                                             const amrex::Vector<const amrex::MultiFab*> &mf_nd,
+                                             const amrex::Vector<std::string> &varnames,
+                                             const amrex::Vector<amrex::Geometry>& my_geom,
+                                             amrex::Real time,
+                                             const amrex::Vector<int> &level_steps,
+                                             const amrex::Vector<amrex::IntVect>& my_ref_ratio,
+                                             const std::string &versionName = "HyperCLaw-V1.1",
+                                             const std::string &levelPrefix = "Level_",
+                                             const std::string &mfPrefix = "Cell",
+                                             const amrex::Vector<std::string>& extra_dirs = amrex::Vector<std::string>());
+
+
+    void WriteGenericPlotfileHeaderWithTerrain (std::ostream &HeaderFile,
+                                                int nlevels,
+                                                const amrex::Vector<amrex::BoxArray> &bArray,
+                                                const amrex::Vector<std::string> &varnames,
+                                                const amrex::Vector<amrex::Geometry>& my_geom,
+                                                amrex::Real time,
+                                                const amrex::Vector<int> &level_steps,
+                                                const amrex::Vector<amrex::IntVect>& my_ref_ratio,
+                                                const std::string &versionName,
+                                                const std::string &levelPrefix,
+                                                const std::string &mfPrefix);
+
+}
+
 #endif

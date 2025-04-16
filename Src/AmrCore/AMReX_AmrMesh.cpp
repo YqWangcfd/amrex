@@ -670,7 +670,7 @@ AmrMesh::MakeNewGrids (int lbase, Real time, int& new_finest, Vector<BoxArray>& 
         //      if the grids at that level aren't already fixed.
         //
 
-        if ( ! (useFixedCoarseGrids() && levc < useFixedUpToLevel()) ) {
+        if ( ! (useFixedCoarseGrids() && levc < useFixedUpToLevel())) {
             ErrorEst(levc, tags, time, 0);
         }
 
@@ -753,6 +753,7 @@ AmrMesh::MakeNewGrids (int lbase, Real time, int& new_finest, Vector<BoxArray>& 
                     // Construct initial cluster.
                     //
                     ClusterList clist(tagvec.data(), static_cast<Long>(tagvec.size()));
+               
                     if (use_new_chop) {
                         clist.new_chop(grid_eff);
                     } else {

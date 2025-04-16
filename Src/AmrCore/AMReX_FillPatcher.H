@@ -609,6 +609,7 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
     mf.ParallelCopy(*m_cf_fine_data, 0, 0, m_ncomp, IntVect(0), m_nghost);
 
     mf.FillBoundary(m_fgeom.periodicity());
+
     fbc(mf, 0, m_ncomp, m_nghost, time, 0);
 }
 

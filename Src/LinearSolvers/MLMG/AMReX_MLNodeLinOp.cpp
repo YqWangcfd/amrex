@@ -167,12 +167,15 @@ MLNodeLinOp::apply (int amrlev, int mglev, MultiFab& out, MultiFab& in, BCMode b
 
 void
 MLNodeLinOp::smooth (int amrlev, int mglev, MultiFab& sol, const MultiFab& rhs,
-                     bool skip_fillboundary) const
+                     bool skip_fillboundary, int niter) const
 {
-    if (!skip_fillboundary) {
-        applyBC(amrlev, mglev, sol, BCMode::Homogeneous, StateMode::Correction);
+    for (int i = 0; i < niter; ++i) {
+        if (!skip_fillboundary) {
+            applyBC(amrlev, mglev, sol, BCMode::Homogeneous, StateMode::Correction);
+        }
+        Fsmooth(amrlev, mglev, sol, rhs);
+        skip_fillboundary = false;
     }
-    Fsmooth(amrlev, mglev, sol, rhs);
 }
 
 Real
@@ -470,7 +473,9 @@ MLNodeLinOp::setDirichletNodesToZero (int amrlev, int mglev, MultiFab& mf) const
     {
         if (maskma[bno](i,j,k)) { ma[bno](i,j,k,n) = RT(0.0); }
     });
-    Gpu::streamSynchronize();
+    if (!Gpu::inNoSyncRegion()) {
+        Gpu::streamSynchronize();
+    }
 #ifdef AMREX_USE_EB
     EB_set_covered(mf, 0, ncomp, 0, RT(0.0));
 #endif

@@ -53,6 +53,23 @@ public:
                          int              actual_state,
                          RunOn            runon) = 0;
 
+    virtual void restrict (const FArrayBox& fine,
+                        int              fine_comp,
+                        FArrayBox&       crse,
+                        int              crse_comp,
+                        int              ncomp,
+                        const Box&       crse_region,
+                        const IntVect&   ratio,
+                        const Geometry&  fine_geom,
+                        const Geometry&  crse_geom,
+                        Vector<BCRec> const& bcr,
+                        int              actual_comp,
+                        int              actual_state,
+                        RunOn            runon)
+    {
+        amrex::Abort("Interpolater::restrict not implemented");
+    }
+
     /**
     * \brief Coarse to fine interpolation in space for face-based data.
     *
@@ -949,6 +966,36 @@ public:
                  const IntVect&   ratio,
                  const Geometry&  crse_geom,
                  const Geometry&  fine_geom,
+                 Vector<BCRec> const& bcr,
+                 int              actual_comp,
+                 int              actual_state,
+                 RunOn            runon) override;
+
+    /**
+    * \brief Fine to coarse interpolation in space.
+    *
+    * \param fine
+    * \param fine_comp
+    * \param crse
+    * \param crse_comp
+    * \param ncomp
+    * \param crse_region
+    * \param ratio
+    * \param fine_geom
+    * \param crse_geom
+    * \param bcr
+    * \param actual_comp
+    * \param actual_state
+    */
+    void restrict (const FArrayBox& fine,
+                 int              fine_comp,
+                 FArrayBox&       crse,
+                 int              crse_comp,
+                 int              ncomp,
+                 const Box&       crse_region,
+                 const IntVect&   ratio,
+                 const Geometry&  fine_geom,
+                 const Geometry&  crse_geom,
                  Vector<BCRec> const& bcr,
                  int              actual_comp,
                  int              actual_state,

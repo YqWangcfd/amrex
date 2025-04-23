@@ -9,7 +9,7 @@
 #else
 #include <AMReX_Interp_3D_C.H>
 #endif
-
+// #include <AMReX_Print.H>
 
 namespace amrex {
 
@@ -332,51 +332,118 @@ void cell_quartic_interp_z (int i, int j, int k, int n, Array4<Real> const& fine
 }
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-void cell_quartic_restrict_x (int i, int j, int k, int n, Array4<Real> const& fine,
-                            Array4<Real const> const& crse) noexcept
+void cell_quartic_restrict_x (int i, int j, int k, int n, Array4<Real> const& crse,
+                            Array4<Real const> const& fine) noexcept
 {
-    constexpr Array1D<Real,-2,2> c = {Real(0.01171875), Real(-0.09765625),
-                                      Real(0.5859375), Real(-0.09765625),
-                                      Real(0.01171875)};
-    int ii = amrex::coarsen(i,2);
-    int s = 2*(i-ii*2) - 1;  // if i == ii*2, s = -1; if i == ii*2+1, s = 1;
-    fine(i,j,k,n) = c(-2*s)*crse(ii-2,j,k,n)
-        +           c(  -s)*crse(ii-1,j,k,n)
-        +           c(   0)*crse(ii  ,j,k,n)
-        +           c(   s)*crse(ii+1,j,k,n)
-        +           c( 2*s)*crse(ii+2,j,k,n);
+    constexpr Array1D<Real,-2,3> c = {Real(0.01171875),  Real(-0.09765625),
+                                      Real(0.5859375),   Real(0.5859375),
+                                      Real(-0.09765625), Real(0.01171875)};
+    constexpr Array1D<Real,-2,2> b = {Real(0.2734375), Real(1.09375),
+                                      Real(-0.546875), Real(0.21875),
+                                      Real(-0.0390625)};
+    int small_end = crse.begin.x;
+    int big_end   = crse.end.x - 1;
+    if (i > small_end && i < big_end) {
+        int ii = i*2;
+        crse(i,j,k,n) = c(-2)*fine(ii-2,j,k,n)
+            +           c(-1)*fine(ii-1,j,k,n)
+            +           c( 0)*fine(ii  ,j,k,n)
+            +           c( 1)*fine(ii+1,j,k,n)
+            +           c( 2)*fine(ii+2,j,k,n)
+            +           c( 3)*fine(ii+3,j,k,n);
+    } else if (i == small_end) {
+        int ii = i*2 + 2;
+        crse(i,j,k,n) = b(-2)*fine(ii-2,j,k,n)
+            +           b(-1)*fine(ii-1,j,k,n)
+            +           b( 0)*fine(ii  ,j,k,n)
+            +           b( 1)*fine(ii+1,j,k,n)
+            +           b( 2)*fine(ii+2,j,k,n);
+    } else if (i == big_end) {
+        int ii = i*2 - 1;
+        crse(i,j,k,n) = b(-2)*fine(ii+2,j,k,n)
+            +           b(-1)*fine(ii+1,j,k,n)
+            +           b( 0)*fine(ii  ,j,k,n)
+            +           b( 1)*fine(ii-1,j,k,n)
+            +           b( 2)*fine(ii-2,j,k,n);
+    } else {
+        amrex::Abort("cell_quartic_restrict_x:  how did this happen?");
+    }
 }
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-void cell_quartic_restrict_y (int i, int j, int k, int n, Array4<Real> const& fine,
-                            Array4<Real const> const& crse) noexcept
+void cell_quartic_restrict_y (int i, int j, int k, int n, Array4<Real> const& crse,
+                            Array4<Real const> const& fine) noexcept
 {
-    constexpr Array1D<Real,-2,2> c = {Real(0.01171875), Real(-0.09765625),
-                                      Real(0.5859375), Real(-0.09765625),
-                                      Real(0.01171875)};
-    int jj = amrex::coarsen(j,2);
-    int s = 2*(j-jj*2) - 1;  // if j == jj*2, s = -1; if j == jj*2+1, s = 1;
-    fine(i,j,k,n) = c(-2*s)*crse(i,jj-2,k,n)
-        +           c(  -s)*crse(i,jj-1,k,n)
-        +           c(   0)*crse(i,jj  ,k,n)
-        +           c(   s)*crse(i,jj+1,k,n)
-        +           c( 2*s)*crse(i,jj+2,k,n);
+    constexpr Array1D<Real,-2,3> c = {Real(0.01171875),  Real(-0.09765625),
+                                      Real(0.5859375),   Real(0.5859375),
+                                      Real(-0.09765625), Real(0.01171875)};
+    constexpr Array1D<Real,-2,2> b = {Real(0.2734375), Real(1.09375),
+                                      Real(-0.546875), Real(0.21875),
+                                      Real(-0.0390625)};
+    int small_end = crse.begin.y, big_end = crse.end.y - 1;
+    if (j > small_end && j < big_end) {
+        int jj = j*2;
+        crse(i,j,k,n) = c(-2)*fine(i,jj-2,k,n)
+            +           c(-1)*fine(i,jj-1,k,n)
+            +           c( 0)*fine(i,jj,  k,n)
+            +           c( 1)*fine(i,jj+1,k,n)
+            +           c( 2)*fine(i,jj+2,k,n)
+            +           c( 3)*fine(i,jj+3,k,n);
+    } else if (j == small_end) {
+        int jj = j*2 + 2;
+        crse(i,j,k,n) = b(-2)*fine(i,jj-2,k,n)
+            +           b(-1)*fine(i,jj-1,k,n)
+            +           b( 0)*fine(i,jj,  k,n)
+            +           b( 1)*fine(i,jj+1,k,n)
+            +           b( 2)*fine(i,jj+2,k,n);
+    } else if (j == big_end) {
+        int jj = j*2 - 1;
+        crse(i,j,k,n) = b(-2)*fine(i,jj+2,k,n)
+            +           b(-1)*fine(i,jj+1,k,n)
+            +           b( 0)*fine(i,jj,  k,n)
+            +           b( 1)*fine(i,jj-1,k,n)
+            +           b( 2)*fine(i,jj-2,k,n);
+    } else {
+        amrex::Abort("cell_quartic_restrict_y:  how did this happen?");
+    }
 }
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-void cell_quartic_restrict_z (int i, int j, int k, int n, Array4<Real> const& fine,
-                            Array4<Real const> const& crse) noexcept
+void cell_quartic_restrict_z (int i, int j, int k, int n, Array4<Real> const& crse,
+                            Array4<Real const> const& fine) noexcept
 {
-    constexpr Array1D<Real,-2,2> c = {Real(0.01171875), Real(-0.09765625),
-                                      Real(0.5859375), Real(-0.09765625),
-                                      Real(0.01171875)};
-    int kk = amrex::coarsen(k,2);
-    int s = 2*(k-kk*2) - 1;  // if k == kk*2, s = -1; if k == kk*2+1, s = 1;
-    fine(i,j,k,n) = c(-2*s)*crse(i,j,kk-2,n)
-        +           c(  -s)*crse(i,j,kk-1,n)
-        +           c(   0)*crse(i,j,kk  ,n)
-        +           c(   s)*crse(i,j,kk+1,n)
-        +           c( 2*s)*crse(i,j,kk+2,n);
+    constexpr Array1D<Real,-2,3> c = {Real(0.01171875),  Real(-0.09765625),
+                                      Real(0.5859375),   Real(0.5859375),
+                                      Real(-0.09765625), Real(0.01171875)};
+    constexpr Array1D<Real,-2,2> b = {Real(0.2734375), Real(1.09375),
+                                      Real(-0.546875), Real(0.21875),
+                                      Real(-0.0390625)};
+    int small_end = crse.begin.z, big_end = crse.end.z - 1;
+    if (k > small_end && k < big_end) {
+        int kk = k*2;
+        crse(i,j,k,n) = c(-2)*fine(i,j,kk-2,n)
+            +           c(-1)*fine(i,j,kk-1,n)
+            +           c( 0)*fine(i,j,kk  ,n)
+            +           c( 1)*fine(i,j,kk+1,n)
+            +           c( 2)*fine(i,j,kk+2,n)
+            +           c( 3)*fine(i,j,kk+3,n);
+    } else if (k == small_end) {
+        int kk = k*2 + 2;
+        crse(i,j,k,n) = b(-2)*fine(i,j,kk-2,n)
+            +           b(-1)*fine(i,j,kk-1,n)
+            +           b( 0)*fine(i,j,kk  ,n)
+            +           b( 1)*fine(i,j,kk+1,n)
+            +           b( 2)*fine(i,j,kk+2,n);
+    } else if (k == big_end) {
+        int kk = k*2 - 1;
+        crse(i,j,k,n) = b(-2)*fine(i,j,kk+2,n)
+            +           b(-1)*fine(i,j,kk+1,n)
+            +           b( 0)*fine(i,j,kk  ,n)
+            +           b( 1)*fine(i,j,kk-1,n)
+            +           b( 2)*fine(i,j,kk-2,n);
+    } else {
+        amrex::Abort("cell_quartic_restrict_z:  how did this happen?");
+    }
 }
 
 }

@@ -1464,7 +1464,7 @@ CellQuartic::restrict (const FArrayBox& fine,
 
 #if (AMREX_SPACEDIM == 3)
     Box bz = amrex::refine(target_crse_region, IntVect(2,2,1));
-    bz.grow(IntVect(2,2,0));
+    // bz.grow(IntVect(2,2,0));
     FArrayBox tmpz(bz, ncomp);
 #ifdef AMREX_USE_GPU
     Elixir tmpz_eli;
@@ -1473,13 +1473,13 @@ CellQuartic::restrict (const FArrayBox& fine,
     Array4<Real> const& tmpzarr = tmpz.array();
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, bz, ncomp, i, j, k, n,
     {
-        cell_quartic_interp_z(i,j,k,n,tmpzarr,finearr);
+        cell_quartic_restrict_z(i,j,k,n,tmpzarr,finearr);
     });
 #endif
 
 #if (AMREX_SPACEDIM >= 2)
     Box by = amrex::refine(target_crse_region, IntVect(AMREX_D_DECL(2,1,1)));
-    by.grow(IntVect(AMREX_D_DECL(2,0,0)));
+    // by.grow(IntVect(AMREX_D_DECL(2,0,0)));
     FArrayBox tmpy(by, ncomp);
 #ifdef AMREX_USE_GPU
     Elixir tmpy_eli;
@@ -1493,7 +1493,7 @@ CellQuartic::restrict (const FArrayBox& fine,
 #endif
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, ncomp, i, j, k, n,
     {
-        cell_quartic_interp_y(i,j,k,n,tmpyarr,srcarr);
+        cell_quartic_restrict_y(i,j,k,n,tmpyarr,srcarr);
     });
 #endif
 
@@ -1505,7 +1505,7 @@ CellQuartic::restrict (const FArrayBox& fine,
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_crse_region, ncomp,
                                            i, j, k, n,
     {
-        cell_quartic_interp_x(i,j,k,n,crsearr,srcarr);
+        cell_quartic_restrict_x(i,j,k,n,crsearr,srcarr);
     });
 }
 

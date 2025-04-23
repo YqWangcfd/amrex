@@ -250,13 +250,13 @@ FillPatchRestrict (MF& mf_crse_patch, int ccomp, MF const& mf_fine_patch, int fc
 #endif
     {
         Vector<BCRec> bcr(ncomp);
-        for (MFIter mfi(mf_fine_patch); mfi.isValid(); ++mfi)
+        for (MFIter mfi(mf_crse_patch); mfi.isValid(); ++mfi)
         {
             auto& sfab = mf_fine_patch[mfi];
             const Box& sbx = sfab.box();
 
             auto& dfab = mf_crse_patch[mfi];
-            Box const& dbx = amrex::refine(mfi.validbox(),ratio) & dest_domain;
+            Box const& dbx = dfab.box();
 
             amrex::setBC(sbx,fdomain,bcscomp,0,ncomp,bcs,bcr);
             mapper->restrict(sfab, fcomp, dfab, ccomp, ncomp, dbx, ratio,
@@ -1333,7 +1333,7 @@ InterpFromCoarseLevel (Array<MF*, AMREX_SPACEDIM> const& mf, IntVect const& ngho
 template <typename MF, typename BC, typename Interp, typename PreInterpHook, typename PostInterpHook>
 std::enable_if_t<IsFabArray<MF>::value>
 InterpFromFineLevel (MF& mf, Real time,
-                       const MF& cmf, int scomp, int dcomp, int ncomp,
+                       const MF& fmf, int scomp, int dcomp, int ncomp,
                        const Geometry& cgeom, const Geometry& fgeom,
                        BC& cbc, int cbccomp,
                        BC& fbc, int fbccomp,
@@ -1351,7 +1351,7 @@ InterpFromFineLevel (MF& mf, Real time,
     EB2::IndexSpace const* index_space = nullptr;
 #endif
 
-    InterpFromFineLevel(mf,mf.nGrowVect(),time,index_space,cmf,scomp,dcomp,ncomp,cgeom,fgeom,
+    InterpFromFineLevel(mf,mf.nGrowVect(),time,index_space,fmf,scomp,dcomp,ncomp,cgeom,fgeom,
                           cbc,cbccomp,fbc,fbccomp,ratio,mapper,bcs,bcscomp,
                           pre_interp,post_interp);
 }
@@ -1405,30 +1405,30 @@ InterpFromFineLevel (MF& mf, IntVect const& nghost, Real time,
 template <typename MF, typename BC, typename Interp, typename PreInterpHook, typename PostInterpHook>
 std::enable_if_t<IsFabArray<MF>::value>
 InterpFromFineLevel (MF& mf, IntVect const& nghost, Real time,
-                       const EB2::IndexSpace* index_space,
-                       const MF& fmf, int scomp, int dcomp, int ncomp,
-                       const Geometry& cgeom, const Geometry& fgeom,
-                       BC& cbc, int cbccomp,
-                       BC& fbc, int fbccomp,
-                       const IntVect& ratio,
-                       Interp* mapper,
-                       const Vector<BCRec>& bcs, int bcscomp,
-                       const PreInterpHook& pre_interp,
-                       const PostInterpHook& post_interp)
+                    const EB2::IndexSpace* index_space,
+                    const MF& fmf, int scomp, int dcomp, int ncomp,
+                    const Geometry& cgeom, const Geometry& fgeom,
+                    BC& cbc, int cbccomp,
+                    BC& fbc, int fbccomp,
+                    const IntVect& ratio,
+                    Interp* mapper,
+                    const Vector<BCRec>& bcs, int bcscomp,
+                    const PreInterpHook& pre_interp,
+                    const PostInterpHook& post_interp)
 {
     BL_PROFILE("InterpFromFineLevel");
     Print() << "InterpFromFineLevel-4" << std::endl;
 
     using FAB = typename MF::FABType::value_type;
 
-    const InterpolaterBoxCoarsener& coarsener = mapper->BoxCoarsener(ratio);
+    // const InterpolaterBoxCoarsener& coarsener = mapper->BoxCoarsener(ratio);
 
     const BoxArray& ba = fmf.boxArray();
     const DistributionMapping& dm = fmf.DistributionMap();
 
     const IndexType& typ = ba.ixType();
 
-    // BL_ASSERT(typ == fmf.boxArray().ixType());
+    BL_ASSERT(typ == mf.boxArray().ixType());
 
     Box fdomain_g( amrex::convert(fgeom.Domain(),mf.ixType()) );
     Box cdomain_g( amrex::convert(cgeom.Domain(),mf.ixType()) );
@@ -1446,20 +1446,21 @@ InterpFromFineLevel (MF& mf, IntVect const& nghost, Real time,
         }
     }
 
-    MF mf_fine_patch;
+    // define temporary coarse patch covered by the fine patch
+    MF mf_crse_patch;
     IntVect send_ghost(0), recv_ghost(0);
     if constexpr (std::is_same_v<BC, PhysBCFunctUseCoarseGhost>) {
-        mf_fine_patch.define(ba, dm, ncomp, fbc.src_ghost);
+        mf_crse_patch.define(amrex::coarsen(ba,ratio), dm, ncomp, fbc.src_ghost);
         send_ghost = fbc.cghost;
         recv_ghost = fbc.src_ghost;
     } else {
-        BoxArray ba_fine_patch(ba.size());
-        {   // obtain fine patch with ghost cells
+        BoxArray ba_crse_patch(ba.size());
+        {  // TODO: later we might want to cache this
             for (int i = 0, N = ba.size(); i < N; ++i)
             {
-                Box bx = amrex::convert(amrex::grow(ba[i],2), typ); // extend stencils for interpolation
+                Box bx = amrex::convert(amrex::grow(ba[i],nghost), typ);
                 bx &= fdomain_g;
-                ba_fine_patch.set(i, bx);
+                ba_crse_patch.set(i, amrex::coarsen(bx,ratio));
             }
         }
 
@@ -1467,26 +1468,26 @@ InterpFromFineLevel (MF& mf, IntVect const& nghost, Real time,
         amrex::ignore_unused(index_space);
 #else
         if (index_space) {
-            auto factory = makeEBFabFactory(index_space, fgeom, ba_fine_patch, dm,
+            auto factory = makeEBFabFactory(index_space, cgeom, ba_crse_patch, dm,
                                             {0,0,0}, EBSupport::basic);
-            mf_fine_patch.define(ba_fine_patch, dm, ncomp, 0, MFInfo(), *factory);
+            mf_crse_patch.define(ba_crse_patch, dm, ncomp, 0, MFInfo(), *factory);
         } else
 #endif
         {
-            mf_fine_patch.define(ba_fine_patch, dm, ncomp, 0);
+            mf_crse_patch.define(ba_crse_patch, dm, ncomp, 0);
         }
-        detail::mf_set_domain_bndry (mf_fine_patch, fgeom);
+        detail::mf_set_domain_bndry (mf_crse_patch, cgeom);
     }
 
-    mf_fine_patch.ParallelCopy(fmf, scomp, 0, ncomp, send_ghost, recv_ghost,
-                               fgeom.periodicity());
+    // fbc(fmf, scomp, ncomp, nghost, time, fbccomp);
 
-    fbc(mf_fine_patch, 0, ncomp, mf_fine_patch.nGrowVect(), time, fbccomp);
+    detail::call_interp_hook(pre_interp, mf_crse_patch, 0, ncomp);
 
-    detail::call_interp_hook(pre_interp, mf_fine_patch, 0, ncomp);
+    FillPatchRestrict(mf_crse_patch, 0, fmf, 0, ncomp, nghost, cgeom, fgeom, cdomain_g,
+                      ratio, mapper, bcs, bcscomp);
 
-    FillPatchRestrict(mf, dcomp, mf_fine_patch, 0, ncomp, nghost, cgeom, fgeom, fdomain_g,
-                    ratio, mapper, bcs, bcscomp);
+    mf.ParallelCopy(mf_crse_patch, scomp, 0, ncomp, send_ghost, recv_ghost,
+                    cgeom.periodicity());
 
 #ifdef AMREX_USE_OMP
 #pragma omp parallel if (Gpu::notInLaunchRegion())
@@ -1501,7 +1502,7 @@ InterpFromFineLevel (MF& mf, IntVect const& nghost, Real time,
         post_interp(dfab, dbx, dcomp, ncomp);
     }
 
-    cbc(mf, dcomp, ncomp, nghost, time, cbccomp);
+    // cbc(mf, 0, ncomp, mf.nGrowVect(), time, cbccomp);
 }
 
 template <typename MF, typename BC, typename Interp, typename PreInterpHook, typename PostInterpHook>

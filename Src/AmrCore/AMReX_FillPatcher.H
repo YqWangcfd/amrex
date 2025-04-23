@@ -475,6 +475,7 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
         constexpr Real d2 = Real(1./3.);
         constexpr Real d3 = Real(4./3.);
         if (stage == 1) {
+            amrex::Print() << "fillRK: stage-1" << std::endl;
             amrex::ParallelFor(*m_cf_crse_data_tmp, IntVect(0), m_ncomp,
             [=] AMREX_GPU_DEVICE (int bi, int i, int j, int k, int n) noexcept
             {
@@ -487,6 +488,7 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                 }
             });
         } else if (stage == 2) {
+            amrex::Print() << "fillRK: stage-2" << std::endl;
             amrex::ParallelFor(*m_cf_crse_data_tmp, IntVect(0), m_ncomp,
             [=] AMREX_GPU_DEVICE (int bi, int i, int j, int k, int n) noexcept
             {
@@ -500,6 +502,7 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                 }
             });
         } else if (stage == 3) {
+            amrex::Print() << "fillRK: stage-3" << std::endl;
             amrex::ParallelFor(*m_cf_crse_data_tmp, IntVect(0), m_ncomp,
             [=] AMREX_GPU_DEVICE (int bi, int i, int j, int k, int n) noexcept
             {

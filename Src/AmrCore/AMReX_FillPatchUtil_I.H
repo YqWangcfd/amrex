@@ -206,6 +206,8 @@ FillPatchInterp (MF& mf_fine_patch, int fcomp, MF const& mf_crse_patch, int ccom
 {
     BL_PROFILE("FillPatchInterp(Fab)");
 
+    // amrex::Print() << "FillPatchInterp: mf_fine_patch" << mf_fine_patch.boxArray() << std::endl;
+
     Box const& cdomain = amrex::convert(cgeom.Domain(), mf_fine_patch.ixType());
     int idummy=0;
 #ifdef AMREX_USE_OMP
@@ -219,11 +221,16 @@ FillPatchInterp (MF& mf_fine_patch, int fcomp, MF const& mf_crse_patch, int ccom
             const Box& sbx = sfab.box();
 
             auto& dfab = mf_fine_patch[mfi];
-            Box const& dbx = amrex::grow(mfi.validbox(),ng) & dest_domain;
+            Box const& dbx = amrex::grow(mfi.validbox(),ng) & dest_domain; // ng = 0
 
             amrex::setBC(sbx,cdomain,bcscomp,0,ncomp,bcs,bcr);
-            mapper->interp(sfab, ccomp, dfab, fcomp, ncomp, dbx, ratio,
-                           cgeom, fgeom, bcr, idummy, idummy, RunOn::Gpu);
+            if (!dbx.isEmpty()) {
+                // amrex::Print() << "FillPatchInterp: mfi.validbox()" << mfi.validbox() << std::endl;
+                // amrex::Print() << "FillPatchInterp: dest_domain" << dest_domain << std::endl;
+                // amrex::Print() << "FillPatchInterp: dbx" << dbx << std::endl;
+                mapper->Lagrange_interp(sfab, ccomp, dfab, fcomp, ncomp, dbx, ratio,
+                                        cgeom, fgeom, bcr, idummy, idummy, RunOn::Gpu);                
+            }
         }
     }
 }
@@ -249,6 +256,9 @@ FillPatchRestrict (MF& mf_crse_patch, int ccomp, MF const& mf_fine_patch, int fc
 #pragma omp parallel if (Gpu::notInLaunchRegion())
 #endif
     {
+        // amrex::Print() << "FillPatchRestrict: crse_boxArray= " 
+        // << mf_crse_patch.boxArray() << std::endl;
+
         Vector<BCRec> bcr(ncomp);
         for (MFIter mfi(mf_crse_patch); mfi.isValid(); ++mfi)
         {
@@ -1333,18 +1343,18 @@ InterpFromCoarseLevel (Array<MF*, AMREX_SPACEDIM> const& mf, IntVect const& ngho
 template <typename MF, typename BC, typename Interp, typename PreInterpHook, typename PostInterpHook>
 std::enable_if_t<IsFabArray<MF>::value>
 InterpFromFineLevel (MF& mf, Real time,
-                       const MF& fmf, int scomp, int dcomp, int ncomp,
-                       const Geometry& cgeom, const Geometry& fgeom,
-                       BC& cbc, int cbccomp,
-                       BC& fbc, int fbccomp,
-                       const IntVect& ratio,
-                       Interp* mapper,
-                       const Vector<BCRec>& bcs, int bcscomp,
-                       const PreInterpHook& pre_interp,
-                       const PostInterpHook& post_interp)
+                    const MF& fmf, int scomp, int dcomp, int ncomp,
+                    const Geometry& cgeom, const Geometry& fgeom,
+                    BC& cbc, int cbccomp,
+                    BC& fbc, int fbccomp,
+                    const IntVect& ratio,
+                    Interp* mapper,
+                    const Vector<BCRec>& bcs, int bcscomp,
+                    const PreInterpHook& pre_interp,
+                    const PostInterpHook& post_interp)
 {
     BL_PROFILE("InterpFromFineLevel");
-    Print() << "InterpFromFineLevel-1" << std::endl;
+    // Print() << "InterpFromFineLevel-1" << std::endl;
 #ifdef AMREX_USE_EB
     EB2::IndexSpace const* index_space = EB2::TopIndexSpaceIfPresent();
 #else
@@ -1352,8 +1362,8 @@ InterpFromFineLevel (MF& mf, Real time,
 #endif
 
     InterpFromFineLevel(mf,mf.nGrowVect(),time,index_space,fmf,scomp,dcomp,ncomp,cgeom,fgeom,
-                          cbc,cbccomp,fbc,fbccomp,ratio,mapper,bcs,bcscomp,
-                          pre_interp,post_interp);
+                        cbc,cbccomp,fbc,fbccomp,ratio,mapper,bcs,bcscomp,
+                        pre_interp,post_interp);
 }
 
 template <typename MF, typename BC, typename Interp, typename PreInterpHook, typename PostInterpHook>
@@ -1370,7 +1380,7 @@ InterpFromFineLevel (Array<MF*, AMREX_SPACEDIM> const& mf, Real time,
                        const PostInterpHook& post_interp)
 {
     BL_PROFILE("InterpFromFineLevel(array)");
-    Print() << "InterpFromFineLevel-2" << std::endl;
+    // Print() << "InterpFromFineLevel-2" << std::endl;
     InterpFromFineLevel(mf,mf[0]->nGrowVect(),time,cmf,scomp,dcomp,ncomp,cgeom,fgeom,
                           cbc,cbccomp,fbc,fbccomp,ratio,mapper,bcs,bcscomp,
                           pre_interp,post_interp);
@@ -1390,7 +1400,7 @@ InterpFromFineLevel (MF& mf, IntVect const& nghost, Real time,
                        const PostInterpHook& post_interp)
 {
     BL_PROFILE("InterpFromFineLevel");
-    Print() << "InterpFromFineLevel-3" << std::endl;
+    // Print() << "InterpFromFineLevel-3" << std::endl;
 #ifdef AMREX_USE_EB
     EB2::IndexSpace const* index_space = EB2::TopIndexSpaceIfPresent();
 #else
@@ -1417,7 +1427,7 @@ InterpFromFineLevel (MF& mf, IntVect const& nghost, Real time,
                     const PostInterpHook& post_interp)
 {
     BL_PROFILE("InterpFromFineLevel");
-    Print() << "InterpFromFineLevel-4" << std::endl;
+    // Print() << "InterpFromFineLevel-4" << std::endl;
 
     using FAB = typename MF::FABType::value_type;
 
@@ -1461,6 +1471,7 @@ InterpFromFineLevel (MF& mf, IntVect const& nghost, Real time,
                 Box bx = amrex::convert(amrex::grow(ba[i],nghost), typ);
                 bx &= fdomain_g;
                 ba_crse_patch.set(i, amrex::coarsen(bx,ratio));
+                // amrex::Print() << "InterpFromFineLevel: ba_crse_patch" << ba_crse_patch[i] << std::endl;
             }
         }
 

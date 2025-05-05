@@ -287,9 +287,9 @@ AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void cell_quartic_interp_x (int i, int j, int k, int n, Array4<Real> const& fine,
                             Array4<Real const> const& crse) noexcept
 {
-    constexpr Array1D<Real,-2,2> c = {Real(0.01708984), Real(-0.12304688),
-                                      Real(0.92285156), Real(0.20507812),
-                                      Real(-0.02197266)};
+    constexpr Array1D<Real,-2,2> c = {Real(0.01708984375), Real(-0.123046875),
+                                      Real(0.9228515625), Real(0.205078125),
+                                      Real(-0.02197265625)};
     int ii = amrex::coarsen(i,2);
     int s = 2*(i-ii*2) - 1;  // if i == ii*2, s = -1; if i == ii*2+1, s = 1;
     fine(i,j,k,n) = c(-2*s)*crse(ii-2,j,k,n)
@@ -303,9 +303,9 @@ AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void cell_quartic_interp_y (int i, int j, int k, int n, Array4<Real> const& fine,
                             Array4<Real const> const& crse) noexcept
 {
-    constexpr Array1D<Real,-2,2> c = {Real(0.01708984), Real(-0.12304688),
-                                      Real(0.92285156), Real(0.20507812),
-                                      Real(-0.02197266)};
+    constexpr Array1D<Real,-2,2> c = {Real(0.01708984375), Real(-0.123046875),
+                                      Real(0.9228515625), Real(0.205078125),
+                                      Real(-0.02197265625)};
     int jj = amrex::coarsen(j,2);
     int s = 2*(j-jj*2) - 1;  // if j == jj*2, s = -1; if j == jj*2+1, s = 1;
     fine(i,j,k,n) = c(-2*s)*crse(i,jj-2,k,n)
@@ -319,9 +319,9 @@ AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void cell_quartic_interp_z (int i, int j, int k, int n, Array4<Real> const& fine,
                             Array4<Real const> const& crse) noexcept
 {
-    constexpr Array1D<Real,-2,2> c = {Real(0.01708984), Real(-0.12304688),
-                                      Real(0.92285156), Real(0.20507812),
-                                      Real(-0.02197266)};
+    constexpr Array1D<Real,-2,2> c = {Real(0.01708984375), Real(-0.123046875),
+                                      Real(0.9228515625), Real(0.205078125),
+                                      Real(-0.02197265625)};
     int kk = amrex::coarsen(k,2);
     int s = 2*(k-kk*2) - 1;  // if k == kk*2, s = -1; if k == kk*2+1, s = 1;
     fine(i,j,k,n) = c(-2*s)*crse(i,j,kk-2,n)
@@ -331,6 +331,181 @@ void cell_quartic_interp_z (int i, int j, int k, int n, Array4<Real> const& fine
         +           c( 2*s)*crse(i,j,kk+2,n);
 }
 
+
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+void Lagrange5_interp_x (int i, int j, int k, int n, Array4<Real> const& fine,
+                            Array4<Real const> const& crse) noexcept
+{
+    // // 5-point upwind biased
+    // constexpr Array1D<Real,-2,2> d = {Real(0.01708984375), Real(-0.107421875),
+    //                                   Real(0.3759765625), Real(0.751953125),
+    //                                   Real(-0.03759765625)};
+    // constexpr Array1D<Real,-2,2> c = {Real(0.01708984375), Real(-0.123046875),
+    //                                   Real(0.9228515625), Real(0.205078125),
+    //                                   Real(-0.02197265625)};
+    // // 6-point upwind biased
+    // constexpr Array1D<Real,-2,3> d = {Real(-0.0093994140625), Real(0.0640869140652),
+    //                                   Real(-0.201416015625), Real(0.469970703125),
+    //                                   Real(0.704956054687), Real(-0.0281982421875)};
+    // constexpr Array1D<Real,-2,3> c = {Real(-0.0076904296875), Real(0.0555419921875),
+    //                                   Real(-0.199951171875), Real(0.999755859375),
+    //                                   Real(0.1666259765625), Real(-0.0142822265625)}; 
+    // // 7-point upwind biased
+    // constexpr Array1D<Real,-3,3> d = {Real(-0.003524780273438), Real(0.028839111328125),
+    //                                   Real(-0.113296508789063), Real(0.352478027343750),
+    //                                   Real(0.793075561523438), Real(-0.063446044921875),
+    //                                   Real(0.005874633789063)};
+    // constexpr Array1D<Real,-3,3> c = {Real(-0.003524780273438), Real(0.030548095703125),
+    //                                   Real(-0.137466430664063), Real(0.916442871093750),
+    //                                   Real(0.229110717773438), Real(-0.039276123046875),
+    //                                   Real(0.004165649414063)};
+    
+    // 6-point centered
+    constexpr Array1D<Real,-3,2> c = {Real(0.007690429687500), Real(-0.06042480468750),
+                                      Real(0.281982421875000), Real(0.845947265625000),
+                                      Real(-0.08459472656250), Real(0.009399414062500)};    
+    
+    // 检查系数和是否为1
+    // Real sum_c = 0.0;
+    // for (int i = -3; i <= 2; ++i) {
+    //     sum_c += c(i);
+    // }
+    // AMREX_ASSERT(std::abs(sum_c - 1.0) < 1e-10);
+    // Real sum_d = 0.0;
+    // for (int i = -3; i <= 2; ++i) {
+    //     sum_d += d(i);
+    // }
+    // AMREX_ASSERT(std::abs(sum_d - 1.0) < 1e-10);
+    // end checking
+
+    int ii = amrex::coarsen(i,2);
+    int s = i-ii*2-1;  // if i == ii*2, s = -1; if i == ii*2+1, s = 0;
+    if (s == -1)
+        // // overall 5-point upwind, 1-point biased
+        // fine(i,j,k,n) = d(-2)*crse(ii-3,j,k,n)
+        //     +           d(-1)*crse(ii-2,j,k,n)
+        //     +           d( 0)*crse(ii-1,j,k,n)
+        //     +           d( 1)*crse(ii  ,j,k,n)
+        //     +           d( 2)*crse(ii+1,j,k,n);
+
+        // // overall 6-point upwind, 2-point biased
+        // fine(i,j,k,n) = d(-2)*crse(ii-4,j,k,n)
+        //     +           d(-1)*crse(ii-3,j,k,n)
+        //     +           d( 0)*crse(ii-2,j,k,n)
+        //     +           d( 1)*crse(ii-1,j,k,n)
+        //     +           d( 2)*crse(ii  ,j,k,n)
+        //     +           d( 3)*crse(ii+1,j,k,n);
+
+        // // overall 7-point upwind, 1-point biased
+        // fine(i,j,k,n) = d(-3)*crse(ii-4,j,k,n)
+        //     +           d(-2)*crse(ii-3,j,k,n)
+        //     +           d(-1)*crse(ii-2,j,k,n)
+        //     +           d( 0)*crse(ii-1,j,k,n)
+        //     +           d( 1)*crse(ii  ,j,k,n)
+        //     +           d( 2)*crse(ii+1,j,k,n)
+        //     +           d( 3)*crse(ii+2,j,k,n);   
+
+        // 6-point centered
+        fine(i,j,k,n) = c(-3)*crse(ii-3,j,k,n)
+            +           c(-2)*crse(ii-2,j,k,n)
+            +           c(-1)*crse(ii-1,j,k,n)
+            +           c( 0)*crse(ii  ,j,k,n)
+            +           c( 1)*crse(ii+1,j,k,n)
+            +           c( 2)*crse(ii+2,j,k,n);
+    else if (s == 0)
+        // // overall 5-point upwind, 1-point biased
+        // fine(i,j,k,n) = c(-2)*crse(ii-2,j,k,n)
+        //     +           c(-1)*crse(ii-1,j,k,n)
+        //     +           c( 0)*crse(ii  ,j,k,n)
+        //     +           c( 1)*crse(ii+1,j,k,n)
+        //     +           c( 2)*crse(ii+2,j,k,n);
+
+        // // overall 6-point upwind, 2-point biased
+        // fine(i,j,k,n) = c(-2)*crse(ii-3,j,k,n)
+        //     +           c(-1)*crse(ii-2,j,k,n)
+        //     +           c( 0)*crse(ii-1,j,k,n)
+        //     +           c( 1)*crse(ii  ,j,k,n)
+        //     +           c( 2)*crse(ii+1,j,k,n)
+        //     +           c( 3)*crse(ii+2,j,k,n);
+
+        // // overall 7-point upwind, 1-point biased
+        // fine(i,j,k,n) = c(-3)*crse(ii-3,j,k,n)
+        //     +           c(-2)*crse(ii-2,j,k,n)
+        //     +           c(-1)*crse(ii-1,j,k,n)
+        //     +           c( 0)*crse(ii  ,j,k,n)
+        //     +           c( 1)*crse(ii+1,j,k,n)
+        //     +           c( 2)*crse(ii+2,j,k,n)
+        //     +           c( 3)*crse(ii+3,j,k,n); 
+
+        //  6-point centered
+        fine(i,j,k,n) = c(-3)*crse(ii+3,j,k,n)
+            +           c(-2)*crse(ii+2,j,k,n)
+            +           c(-1)*crse(ii+1,j,k,n)
+            +           c( 0)*crse(ii  ,j,k,n)
+            +           c( 1)*crse(ii-1,j,k,n)
+            +           c( 2)*crse(ii-2,j,k,n);
+    else
+        amrex::Abort("Lagrange5_interp: how did this happen?");
+}
+
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+void Lagrange5_interp_y (int i, int j, int k, int n, Array4<Real> const& fine,
+                            Array4<Real const> const& crse) noexcept
+{
+    constexpr Array1D<Real,-2,2> c = {Real(0.01708984375), Real(-0.123046875),
+                                      Real(0.9228515625), Real(0.205078125),
+                                      Real(-0.02197265625)};
+    constexpr Array1D<Real,-2,2> d = {Real(0.01708984375), Real(-0.107421875),
+                                      Real(0.3759765625), Real(0.751953125),
+                                      Real(-0.03759765625)};
+    int jj = amrex::coarsen(j,2);
+    int s = j-jj*2 - 1;  // if j == jj*2, s = -1; if j == jj*2+1, s = 0;
+    if (s == 0)
+        fine(i,j,k,n) = c(-2)*crse(i,jj-2,k,n)
+            +           c(-1)*crse(i,jj-1,k,n)
+            +           c( 0)*crse(i,jj  ,k,n)
+            +           c( 1)*crse(i,jj+1,k,n)
+            +           c( 2)*crse(i,jj+2,k,n);
+    else if (s == -1)
+        fine(i,j,k,n) = d(-2)*crse(i,jj-3,k,n)
+            +           d(-1)*crse(i,jj-2,k,n)
+            +           d( 0)*crse(i,jj-1,k,n)
+            +           d( 1)*crse(i,jj  ,k,n)
+            +           d( 2)*crse(i,jj+1,k,n);
+    else
+        amrex::Abort("Lagrange5_interp: how did this happen?");
+
+    fine(i,j,k,n) = crse(i,jj,k,n);
+}
+
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+void Lagrange5_interp_z (int i, int j, int k, int n, Array4<Real> const& fine,
+                            Array4<Real const> const& crse) noexcept
+{
+    constexpr Array1D<Real,-2,2> c = {Real(0.01708984375), Real(-0.123046875),
+                                      Real(0.9228515625), Real(0.205078125),
+                                      Real(-0.02197265625)};
+    constexpr Array1D<Real,-2,2> d = {Real(0.01708984375), Real(-0.107421875),
+                                      Real(0.3759765625), Real(0.751953125),
+                                      Real(-0.03759765625)};
+    int kk = amrex::coarsen(k,2);
+    int s = k-kk*2 - 1;  // if k == kk*2, s = -1; if k == kk*2+1, s = 0;
+    if (s == 0)
+        fine(i,j,k,n) = c(-2)*crse(i,j,kk-2,n)
+            +           c(-1)*crse(i,j,kk-1,n)
+            +           c( 0)*crse(i,j,k   ,n)
+            +           c( 1)*crse(i,j,kk+1,n)
+            +           c( 2)*crse(i,j,kk+2,n);
+    else if (s == -1)
+        fine(i,j,k,n) = d(-2)*crse(i,j,kk-3,n)
+            +           d(-1)*crse(i,j,kk-2,n)
+            +           d( 0)*crse(i,j,kk-1,n)
+            +           d( 1)*crse(i,j,k   ,n)
+            +           d( 2)*crse(i,j,kk+1,n);
+    else
+        amrex::Abort("Lagrange5_interp: how did this happen?");
+}
+
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void cell_quartic_restrict_x (int i, int j, int k, int n, Array4<Real> const& crse,
                             Array4<Real const> const& fine) noexcept
@@ -338,33 +513,69 @@ void cell_quartic_restrict_x (int i, int j, int k, int n, Array4<Real> const& cr
     constexpr Array1D<Real,-2,3> c = {Real(0.01171875),  Real(-0.09765625),
                                       Real(0.5859375),   Real(0.5859375),
                                       Real(-0.09765625), Real(0.01171875)};
-    constexpr Array1D<Real,-2,2> b = {Real(0.2734375), Real(1.09375),
-                                      Real(-0.546875), Real(0.21875),
-                                      Real(-0.0390625)};
+    constexpr Array1D<Real,-2,2> b1 = {Real(0.0234375), Real(-0.15625),
+                                      Real(0.703125), Real(0.46875),
+                                      Real(-0.0390625)}; // 5-point stencil
+    constexpr Array1D<Real,-2,3> b2 = {Real(0.24609375), Real(1.23046875),
+                                        Real(-0.8203125), Real(0.4921875),
+                                        Real(-0.17578125), Real(0.02734375)};   // 6-point stencil    
+    constexpr Array1D<Real,-3,2> d = {Real(-0.0093994140625), Real(0.0640869140652),
+                                      Real(-0.201416015625), Real(0.469970703125),
+                                      Real(0.704956054687), Real(-0.0281982421875)}; // 6-point, biased stencil
+    constexpr Array1D<Real,-3,4> c8 = {Real(-0.002441406250000), Real(0.023925781250000),
+                                      Real(-0.119628906250000), Real(0.598144531250000),
+                                      Real(0.598144531250000), Real(-0.119628906250000),
+                                      Real(0.023925781250000), Real(-0.002441406250000)}; // 8-point, centered stencil
+
     int small_end = crse.begin.x;
     int big_end   = crse.end.x - 1;
     if (i > small_end && i < big_end) {
         int ii = i*2;
+        // 8-point centered
+        // crse(i,j,k,n) = c8(-3)*fine(ii-3,j,k,n)
+        //     +           c8(-2)*fine(ii-2,j,k,n)
+        //     +           c8(-1)*fine(ii-1,j,k,n)
+        //     +           c8( 0)*fine(ii  ,j,k,n)
+        //     +           c8( 1)*fine(ii+1,j,k,n)
+        //     +           c8( 2)*fine(ii+2,j,k,n)
+        //     +           c8( 3)*fine(ii+3,j,k,n);
+        //     +           c8( 4)*fine(ii+4,j,k,n);
+        // 6-point centered
         crse(i,j,k,n) = c(-2)*fine(ii-2,j,k,n)
             +           c(-1)*fine(ii-1,j,k,n)
             +           c( 0)*fine(ii  ,j,k,n)
             +           c( 1)*fine(ii+1,j,k,n)
             +           c( 2)*fine(ii+2,j,k,n)
-            +           c( 3)*fine(ii+3,j,k,n);
+            +           c( 3)*fine(ii+3,j,k,n);    
+        // // 6-point biased
+        // crse(i,j,k,n) = d(-3)*fine(ii-3,j,k,n)
+        //     +           d(-2)*fine(ii-2,j,k,n)
+        //     +           d(-1)*fine(ii-1,j,k,n)
+        //     +           d( 0)*fine(ii  ,j,k,n)
+        //     +           d( 1)*fine(ii+1,j,k,n)
+        //     +           d( 2)*fine(ii+2,j,k,n);    
+        // 5-point biased
+        // crse(i,j,k,n) = b1(-2)*fine(ii-2,j,k,n)
+        //     +           b1(-1)*fine(ii-1,j,k,n)
+        //     +           b1( 0)*fine(ii  ,j,k,n)
+        //     +           b1( 1)*fine(ii+1,j,k,n)
+        //     +           b1( 2)*fine(ii+2,j,k,n);    
     } else if (i == small_end) {
         int ii = i*2 + 2;
-        crse(i,j,k,n) = b(-2)*fine(ii-2,j,k,n)
-            +           b(-1)*fine(ii-1,j,k,n)
-            +           b( 0)*fine(ii  ,j,k,n)
-            +           b( 1)*fine(ii+1,j,k,n)
-            +           b( 2)*fine(ii+2,j,k,n);
+        crse(i,j,k,n) = b2(-2)*fine(ii-2,j,k,n)
+            +           b2(-1)*fine(ii-1,j,k,n)
+            +           b2( 0)*fine(ii  ,j,k,n)
+            +           b2( 1)*fine(ii+1,j,k,n)
+            +           b2( 2)*fine(ii+2,j,k,n)
+            +           b2( 3)*fine(ii+3,j,k,n);
     } else if (i == big_end) {
         int ii = i*2 - 1;
-        crse(i,j,k,n) = b(-2)*fine(ii+2,j,k,n)
-            +           b(-1)*fine(ii+1,j,k,n)
-            +           b( 0)*fine(ii  ,j,k,n)
-            +           b( 1)*fine(ii-1,j,k,n)
-            +           b( 2)*fine(ii-2,j,k,n);
+        crse(i,j,k,n) = b2(-2)*fine(ii+2,j,k,n)
+            +           b2(-1)*fine(ii+1,j,k,n)
+            +           b2( 0)*fine(ii  ,j,k,n)
+            +           b2( 1)*fine(ii-1,j,k,n)
+            +           b2( 2)*fine(ii-2,j,k,n)
+            +           b2( 3)*fine(ii-3,j,k,n);
     } else {
         amrex::Abort("cell_quartic_restrict_x:  how did this happen?");
     }
@@ -377,9 +588,13 @@ void cell_quartic_restrict_y (int i, int j, int k, int n, Array4<Real> const& cr
     constexpr Array1D<Real,-2,3> c = {Real(0.01171875),  Real(-0.09765625),
                                       Real(0.5859375),   Real(0.5859375),
                                       Real(-0.09765625), Real(0.01171875)};
-    constexpr Array1D<Real,-2,2> b = {Real(0.2734375), Real(1.09375),
+    constexpr Array1D<Real,-2,2> b1 = {Real(0.2734375), Real(1.09375),
                                       Real(-0.546875), Real(0.21875),
-                                      Real(-0.0390625)};
+                                      Real(-0.0390625)}; // 5-point stencil
+    constexpr Array1D<Real,-2,3> b2 = {Real(0.24609375), Real(1.23046875),
+                                        Real(-0.8203125), Real(0.4921875),
+                                        Real(-0.17578125), Real(0.02734375)};   // 6-point stencil    
+
     int small_end = crse.begin.y, big_end = crse.end.y - 1;
     if (j > small_end && j < big_end) {
         int jj = j*2;
@@ -391,18 +606,20 @@ void cell_quartic_restrict_y (int i, int j, int k, int n, Array4<Real> const& cr
             +           c( 3)*fine(i,jj+3,k,n);
     } else if (j == small_end) {
         int jj = j*2 + 2;
-        crse(i,j,k,n) = b(-2)*fine(i,jj-2,k,n)
-            +           b(-1)*fine(i,jj-1,k,n)
-            +           b( 0)*fine(i,jj,  k,n)
-            +           b( 1)*fine(i,jj+1,k,n)
-            +           b( 2)*fine(i,jj+2,k,n);
+        crse(i,j,k,n) = b2(-2)*fine(i,jj-2,k,n)
+            +           b2(-1)*fine(i,jj-1,k,n)
+            +           b2( 0)*fine(i,jj,  k,n)
+            +           b2( 1)*fine(i,jj+1,k,n)
+            +           b2( 2)*fine(i,jj+2,k,n)
+            +           b2( 3)*fine(i,jj+3,k,n);
     } else if (j == big_end) {
         int jj = j*2 - 1;
-        crse(i,j,k,n) = b(-2)*fine(i,jj+2,k,n)
-            +           b(-1)*fine(i,jj+1,k,n)
-            +           b( 0)*fine(i,jj,  k,n)
-            +           b( 1)*fine(i,jj-1,k,n)
-            +           b( 2)*fine(i,jj-2,k,n);
+        crse(i,j,k,n) = b2(-2)*fine(i,jj+2,k,n)
+            +           b2(-1)*fine(i,jj+1,k,n)
+            +           b2( 0)*fine(i,jj,  k,n)
+            +           b2( 1)*fine(i,jj-1,k,n)
+            +           b2( 2)*fine(i,jj-2,k,n)
+            +           b2( 3)*fine(i,jj-3,k,n);
     } else {
         amrex::Abort("cell_quartic_restrict_y:  how did this happen?");
     }
@@ -415,9 +632,13 @@ void cell_quartic_restrict_z (int i, int j, int k, int n, Array4<Real> const& cr
     constexpr Array1D<Real,-2,3> c = {Real(0.01171875),  Real(-0.09765625),
                                       Real(0.5859375),   Real(0.5859375),
                                       Real(-0.09765625), Real(0.01171875)};
-    constexpr Array1D<Real,-2,2> b = {Real(0.2734375), Real(1.09375),
+    constexpr Array1D<Real,-2,2> b1 = {Real(0.2734375), Real(1.09375),
                                       Real(-0.546875), Real(0.21875),
-                                      Real(-0.0390625)};
+                                      Real(-0.0390625)}; // 5-point stencil
+    constexpr Array1D<Real,-2,3> b2 = {Real(0.24609375), Real(1.23046875),
+                                        Real(-0.8203125), Real(0.4921875),
+                                        Real(-0.17578125), Real(0.02734375)};   // 6-point stencil    
+
     int small_end = crse.begin.z, big_end = crse.end.z - 1;
     if (k > small_end && k < big_end) {
         int kk = k*2;
@@ -429,18 +650,20 @@ void cell_quartic_restrict_z (int i, int j, int k, int n, Array4<Real> const& cr
             +           c( 3)*fine(i,j,kk+3,n);
     } else if (k == small_end) {
         int kk = k*2 + 2;
-        crse(i,j,k,n) = b(-2)*fine(i,j,kk-2,n)
-            +           b(-1)*fine(i,j,kk-1,n)
-            +           b( 0)*fine(i,j,kk  ,n)
-            +           b( 1)*fine(i,j,kk+1,n)
-            +           b( 2)*fine(i,j,kk+2,n);
+        crse(i,j,k,n) = b2(-2)*fine(i,j,kk-2,n)
+            +           b2(-1)*fine(i,j,kk-1,n)
+            +           b2( 0)*fine(i,j,kk  ,n)
+            +           b2( 1)*fine(i,j,kk+1,n)
+            +           b2( 2)*fine(i,j,kk+2,n)
+            +           b2( 3)*fine(i,j,kk+3,n);
     } else if (k == big_end) {
         int kk = k*2 - 1;
-        crse(i,j,k,n) = b(-2)*fine(i,j,kk+2,n)
-            +           b(-1)*fine(i,j,kk+1,n)
-            +           b( 0)*fine(i,j,kk  ,n)
-            +           b( 1)*fine(i,j,kk-1,n)
-            +           b( 2)*fine(i,j,kk-2,n);
+        crse(i,j,k,n) = b2(-2)*fine(i,j,kk+2,n)
+            +           b2(-1)*fine(i,j,kk+1,n)
+            +           b2( 0)*fine(i,j,kk  ,n)
+            +           b2( 1)*fine(i,j,kk-1,n)
+            +           b2( 2)*fine(i,j,kk-2,n)
+            +           b2( 3)*fine(i,j,kk-3,n);
     } else {
         amrex::Abort("cell_quartic_restrict_z:  how did this happen?");
     }

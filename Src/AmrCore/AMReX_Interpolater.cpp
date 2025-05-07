@@ -1482,7 +1482,7 @@ CellQuartic::Lagrange_interp (const FArrayBox& crse,
 
 #if (AMREX_SPACEDIM >= 2)
     Box by = amrex::coarsen(target_fine_region, IntVect(AMREX_D_DECL(2,1,1)));
-    by.grow(IntVect(AMREX_D_DECL(4,0,0)));
+    by.grow(IntVect(AMREX_D_DECL(3,0,0)));
     FArrayBox tmpy(by, ncomp);
 #ifdef AMREX_USE_GPU
     Elixir tmpy_eli;

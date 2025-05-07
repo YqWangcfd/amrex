@@ -452,56 +452,54 @@ AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void Lagrange5_interp_y (int i, int j, int k, int n, Array4<Real> const& fine,
                             Array4<Real const> const& crse) noexcept
 {
-    constexpr Array1D<Real,-2,2> c = {Real(0.01708984375), Real(-0.123046875),
-                                      Real(0.9228515625), Real(0.205078125),
-                                      Real(-0.02197265625)};
-    constexpr Array1D<Real,-2,2> d = {Real(0.01708984375), Real(-0.107421875),
-                                      Real(0.3759765625), Real(0.751953125),
-                                      Real(-0.03759765625)};
+    // 6-point centered
+    constexpr Array1D<Real,-3,2> c = {Real(0.007690429687500), Real(-0.06042480468750),
+                                      Real(0.281982421875000), Real(0.845947265625000),
+                                      Real(-0.08459472656250), Real(0.009399414062500)}; 
     int jj = amrex::coarsen(j,2);
-    int s = j-jj*2 - 1;  // if j == jj*2, s = -1; if j == jj*2+1, s = 0;
-    if (s == 0)
-        fine(i,j,k,n) = c(-2)*crse(i,jj-2,k,n)
+    int s = j-jj*2-1;  // if j == jj*2, s = -1; if j == jj*2+1, s = 0;
+    if (s == -1)
+        fine(i,j,k,n) = c(-3)*crse(i,jj-3,k,n)
+            +           c(-2)*crse(i,jj-2,k,n)
             +           c(-1)*crse(i,jj-1,k,n)
             +           c( 0)*crse(i,jj  ,k,n)
             +           c( 1)*crse(i,jj+1,k,n)
             +           c( 2)*crse(i,jj+2,k,n);
-    else if (s == -1)
-        fine(i,j,k,n) = d(-2)*crse(i,jj-3,k,n)
-            +           d(-1)*crse(i,jj-2,k,n)
-            +           d( 0)*crse(i,jj-1,k,n)
-            +           d( 1)*crse(i,jj  ,k,n)
-            +           d( 2)*crse(i,jj+1,k,n);
+    else if (s == 0)
+        fine(i,j,k,n) = c(-3)*crse(i,jj+3,k,n)
+            +           c(-2)*crse(i,jj+2,k,n)
+            +           c(-1)*crse(i,jj+1,k,n)
+            +           c( 0)*crse(i,jj  ,k,n)
+            +           c( 1)*crse(i,jj+1,k,n)
+            +           c( 2)*crse(i,jj+2,k,n);
     else
         amrex::Abort("Lagrange5_interp: how did this happen?");
-
-    fine(i,j,k,n) = crse(i,jj,k,n);
 }
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void Lagrange5_interp_z (int i, int j, int k, int n, Array4<Real> const& fine,
                             Array4<Real const> const& crse) noexcept
 {
-    constexpr Array1D<Real,-2,2> c = {Real(0.01708984375), Real(-0.123046875),
-                                      Real(0.9228515625), Real(0.205078125),
-                                      Real(-0.02197265625)};
-    constexpr Array1D<Real,-2,2> d = {Real(0.01708984375), Real(-0.107421875),
-                                      Real(0.3759765625), Real(0.751953125),
-                                      Real(-0.03759765625)};
+    // 6-point centered
+    constexpr Array1D<Real,-3,2> c = {Real(0.007690429687500), Real(-0.06042480468750),
+                                      Real(0.281982421875000), Real(0.845947265625000),
+                                      Real(-0.08459472656250), Real(0.009399414062500)}; 
     int kk = amrex::coarsen(k,2);
-    int s = k-kk*2 - 1;  // if k == kk*2, s = -1; if k == kk*2+1, s = 0;
+    int s = k-kk*2-1;  // if k == kk*2, s = -1; if k == kk*2+1, s = 0;
     if (s == 0)
-        fine(i,j,k,n) = c(-2)*crse(i,j,kk-2,n)
+        fine(i,j,k,n) = c(-3)*crse(i,j,kk-3,n)
+            +           c(-2)*crse(i,j,kk-2,n)
             +           c(-1)*crse(i,j,kk-1,n)
             +           c( 0)*crse(i,j,k   ,n)
             +           c( 1)*crse(i,j,kk+1,n)
             +           c( 2)*crse(i,j,kk+2,n);
     else if (s == -1)
-        fine(i,j,k,n) = d(-2)*crse(i,j,kk-3,n)
-            +           d(-1)*crse(i,j,kk-2,n)
-            +           d( 0)*crse(i,j,kk-1,n)
-            +           d( 1)*crse(i,j,k   ,n)
-            +           d( 2)*crse(i,j,kk+1,n);
+        fine(i,j,k,n) = c(-3)*crse(i,j,kk+3,n)
+            +           c(-2)*crse(i,j,kk+2,n)
+            +           c(-1)*crse(i,j,kk+1,n)
+            +           c( 0)*crse(i,j,k   ,n)
+            +           c( 1)*crse(i,j,kk-1,n)
+            +           c( 2)*crse(i,j,kk-2,n);
     else
         amrex::Abort("Lagrange5_interp: how did this happen?");
 }

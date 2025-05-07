@@ -607,11 +607,7 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
     // amrex::Print() << "fillRK():m_cf_crse_data_tmp->boxArray()= " << m_cf_crse_data_tmp->boxArray() << std::endl;
     // amrex::Print() << "fillRK():m_nghost= " << m_nghost << std::endl;
 
-    cbc(*m_cf_crse_data_tmp, 0, m_ncomp, m_cf_crse_data_tmp->nGrowVect(), time, 0);
-
-    amrex::Print() << "FillPatcher::fillCFB, m_cf_crse_data_tmp->nGrowVect()"
-                   << m_cf_crse_data_tmp->nGrowVect() 
-                   << ", m_nghost= " << m_nghost << std::endl;
+    cbc(*m_cf_crse_data_tmp, 0, m_ncomp, m_cf_crse_data_tmp->nGrowVect(), time, 0); // m_cf_crse_data_tmp->nGrowVect() = 0, m_gnhost=6
 
 
     if (m_cf_fine_data == nullptr) {

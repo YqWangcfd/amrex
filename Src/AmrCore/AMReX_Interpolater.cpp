@@ -1543,7 +1543,6 @@ CellQuartic::restrict (const FArrayBox& fine,
 
 #if (AMREX_SPACEDIM == 3)
     Box bz = amrex::refine(target_crse_region, IntVect(2,2,1));
-    bz.grow(IntVect(4,4,0));
     FArrayBox tmpz(bz, ncomp);
 #ifdef AMREX_USE_GPU
     Elixir tmpz_eli;
@@ -1558,7 +1557,6 @@ CellQuartic::restrict (const FArrayBox& fine,
 
 #if (AMREX_SPACEDIM >= 2)
     Box by = amrex::refine(target_crse_region, IntVect(AMREX_D_DECL(2,1,1)));
-    by.grow(IntVect(AMREX_D_DECL(4,0,0)));
     FArrayBox tmpy(by, ncomp);
 #ifdef AMREX_USE_GPU
     Elixir tmpy_eli;

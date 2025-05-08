@@ -581,17 +581,17 @@ void cell_quartic_restrict_x (int i, int j, int k, int n, Array4<Real> const& cr
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void cell_quartic_restrict_y (int i, int j, int k, int n, Array4<Real> const& crse,
-                            Array4<Real const> const& fine) noexcept
+                              Array4<Real const> const& fine) noexcept
 {
-    constexpr Array1D<Real,-2,3> c = {Real(0.01171875),  Real(-0.09765625),
-                                      Real(0.5859375),   Real(0.5859375),
-                                      Real(-0.09765625), Real(0.01171875)};
+    constexpr Array1D<Real,-2,3> c  = {Real(0.01171875),  Real(-0.09765625),
+                                       Real(0.5859375),   Real(0.5859375),
+                                       Real(-0.09765625), Real(0.01171875)};
     constexpr Array1D<Real,-2,2> b1 = {Real(0.2734375), Real(1.09375),
-                                      Real(-0.546875), Real(0.21875),
-                                      Real(-0.0390625)}; // 5-point stencil
+                                       Real(-0.546875), Real(0.21875),
+                                       Real(-0.0390625)}; // 5-point stencil
     constexpr Array1D<Real,-2,3> b2 = {Real(0.24609375), Real(1.23046875),
-                                        Real(-0.8203125), Real(0.4921875),
-                                        Real(-0.17578125), Real(0.02734375)};   // 6-point stencil    
+                                       Real(-0.8203125), Real(0.4921875),
+                                       Real(-0.17578125), Real(0.02734375)};   // 6-point stencil    
 
     int small_end = crse.begin.y, big_end = crse.end.y - 1;
     if (j > small_end && j < big_end) {

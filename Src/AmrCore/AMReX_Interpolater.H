@@ -988,19 +988,19 @@ public:
                  int              actual_state,
                  RunOn            runon) override;
 
-    void Lagrange_interp (const FArrayBox& crse,
-                 int              crse_comp,
-                 FArrayBox&       fine,
-                 int              fine_comp,
-                 int              ncomp,
-                 const Box&       fine_region,
-                 const IntVect&   ratio,
-                 const Geometry&  crse_geom,
-                 const Geometry&  fine_geom,
-                 Vector<BCRec> const& bcr,
-                 int              actual_comp,
-                 int              actual_state,
-                 RunOn            runon) override;
+    // void Lagrange_interp (const FArrayBox& crse,
+    //              int              crse_comp,
+    //              FArrayBox&       fine,
+    //              int              fine_comp,
+    //              int              ncomp,
+    //              const Box&       fine_region,
+    //              const IntVect&   ratio,
+    //              const Geometry&  crse_geom,
+    //              const Geometry&  fine_geom,
+    //              Vector<BCRec> const& bcr,
+    //              int              actual_comp,
+    //              int              actual_state,
+    //              RunOn            runon) override;
     /**
     * \brief Fine to coarse interpolation in space.
     *

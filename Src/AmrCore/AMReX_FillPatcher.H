@@ -200,6 +200,8 @@ public:
                     MF& mf, Real ctime, Real ftime, BC& cbc, BC& fbc,
                     Vector<BCRec> const& bcs);
 
+    void set_interpolater(InterpBase* interp_new);
+
 private:
 
     BoxArray m_fba;
@@ -221,6 +223,13 @@ private:
 
     FabArrayBase::FPinfo const& getFPinfo ();
 };
+
+template <class MF>
+void
+FillPatcher<MF>::set_interpolater (InterpBase* interp_new)
+{
+    this->m_interp = interp_new;
+}
 
 template <class MF>
 FillPatcher<MF>::FillPatcher (BoxArray const& fba, DistributionMapping const& fdm,

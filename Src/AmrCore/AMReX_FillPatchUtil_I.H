@@ -228,7 +228,7 @@ FillPatchInterp (MF& mf_fine_patch, int fcomp, MF const& mf_crse_patch, int ccom
                 // amrex::Print() << "FillPatchInterp: mfi.validbox()" << mfi.validbox() << std::endl;
                 // amrex::Print() << "FillPatchInterp: dest_domain" << dest_domain << std::endl;
                 // amrex::Print() << "FillPatchInterp: dbx" << dbx << std::endl;
-                mapper->Lagrange_interp(sfab, ccomp, dfab, fcomp, ncomp, dbx, ratio,
+                mapper->interp(sfab, ccomp, dfab, fcomp, ncomp, dbx, ratio,
                                         cgeom, fgeom, bcr, idummy, idummy, RunOn::Gpu);                
             }
         }

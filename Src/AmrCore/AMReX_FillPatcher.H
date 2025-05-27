@@ -196,7 +196,7 @@ public:
                  BC& cbc, BC& fbc, Vector<BCRec> const& bcs);
 
     template <typename BC>
-    void fillRK_new (int stage, int iteration, int ncycle,
+    void hybridfillRK (int stage, int iteration, int ncycle,
                     MF& mf, Real ctime, Real ftime, BC& cbc, BC& fbc,
                     Vector<BCRec> const& bcs);
 
@@ -639,11 +639,11 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
 
 template <typename MF>
 template <typename BC>
-void FillPatcher<MF>::fillRK_new (int stage, int iteration, int ncycle,
+void FillPatcher<MF>::hybridfillRK (int stage, int iteration, int ncycle,
                               MF& mf, Real ctime, Real ftime, BC& cbc, BC& fbc,
                               Vector<BCRec> const& bcs)
 {
-    BL_PROFILE("FillPatcher::fillRK_new()");
+    BL_PROFILE("FillPatcher::hybridfillRK()");
     int rk_order = m_cf_crse_data.size()-1;
     if (rk_order != 3 && rk_order != 4) {
         amrex::Abort("FillPatcher: unsupported RK order "+std::to_string(rk_order));

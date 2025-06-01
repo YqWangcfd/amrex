@@ -450,7 +450,7 @@ void Lagrange5_interp_x (int i, int j, int k, int n, Array4<Real> const& fine,
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void Lagrange5_interp_y (int i, int j, int k, int n, Array4<Real> const& fine,
-                            Array4<Real const> const& crse) noexcept
+                         Array4<Real const> const& crse) noexcept
 {
     // 6-point centered
     constexpr Array1D<Real,-3,2> c = {Real(0.007690429687500), Real(-0.06042480468750),
@@ -503,6 +503,7 @@ void Lagrange5_interp_z (int i, int j, int k, int n, Array4<Real> const& fine,
     else
         amrex::Abort("Lagrange5_interp: how did this happen?");
 }
+
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void cell_quartic_restrict_x (int i, int j, int k, int n, Array4<Real> const& crse,
@@ -665,6 +666,188 @@ void cell_quartic_restrict_z (int i, int j, int k, int n, Array4<Real> const& cr
     } else {
         amrex::Abort("cell_quartic_restrict_z:  how did this happen?");
     }
+}
+
+
+
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+void central_weno_interp_x (int i, int j, int k, int n, 
+                            Array4<Real> const& fine,
+                            Array4<Real const> const& crse) noexcept
+{
+    // index 
+    int ii = amrex::coarsen(i,2);
+    int s = i-ii*2;
+
+    // Interpolate 
+    // step-1: choose number of interpolated variables
+    //         for ideal gas and real gas respectively
+    constexpr int stentils = 6;
+// #ifndef USE_FUEGO_EOS
+//     constexpr int np = 1;
+//     constexpr int nc = 5;
+// #else
+//     constexpr int np = NSP;
+//     constexpr int nc = NEQ-2;
+// #endif
+
+    // step-2: create temporary GpuArrays storing interpolated variables
+    amrex::GpuArray<Real, n> uf;
+    amrex::GpuArray<amrex::GpuArray<Real, n>, stencils> uc;
+#ifndef USE_FUEGO_EOS
+    for (int n = 0; n < stencils; ++n) {
+        // uc[n][0] = crse(i+n+s-3,j,k,MRHO);
+        // uc[n][1] = crse(i+n+s-3,j,k,MU); 
+        // uc[n][2] = crse(i+n+s-3,j,k,MV);
+        // uc[n][3] = crse(i+n+s-3,j,k,MW);
+        // uc[n][4] = crse(i+n+s-3,j,k,ME);
+        for (int m = 0; m < n; ++m)
+    }
+#else
+    for (int n = 0; n < stencils; ++n) {
+        for (int m = 0; m < np; ++m) {
+            uc[n][m] = crse(i+n-3,j,k,m);    
+        }
+        uc[n][np]   = crse(i+n+s-3,j,k,MU);
+        uc[n][np+1] = crse(i+n+s-3,j,k,MV);
+        uc[n][np+2] = crse(i+n+s-3,j,k,MW);
+        uc[n][np+3] = crse(i+n+s-3,j,k,ME);
+    }
+#endif
+
+    // step-3: direct interp (no splitting and decomposition)
+    for (int n = 0; n < nc; ++n) 
+    {
+        WENO_Interp_JS6(uc[0][n], uc[1][n], uc[2][n], 
+                        uc[3][n], uc[4][n], uc[5][n],
+                        uf[n], s)
+    }
+
+    // step-4: calculate full vector of states
+#ifdef USE_FUEGO_EOS
+    for (int n = 0; n < NSP; ++n) {
+        uf(i,j,k,n) = 0.0;
+    }
+    uf(i,j,k,MRHO) = 
+}
+
+
+AMREX_GPU_DEVICE
+AMREX_FORCE_INLINE
+void WENO_Interp_JS6(const amrex::Real& v0, const amrex::Real& v1, const amrex::Real& v2, 
+                     const amrex::Real& v3, const amrex::Real& v4, const amrex::Real& v5, 
+                     amrex::Real& v_edge, int s)
+{
+    using namespace amrex;
+
+    switch(s) {
+        case 0:
+            // WENO-JS linear weights
+            constexpr Real d0 = 3.0/256.0;
+            constexpr Real d1 = 99.0/256.0;
+            constexpr Real d2 = 693.0/1280.0;
+            constexpr Real d3 = 77.0/1280.0
+
+            // Compute smoothness indicators
+            Real beta0 = 1.0/3.0*(
+                         29.0*v0*v2 - 49.0*v0*v1 - 73.0*v1*v2 + 
+                         10.0*pow(v0,2) + 61.0*pow(v1,2) + 22.0*pow(v2,2)
+            );
+            Real beta1 = 1.0/3.0*(
+                         11.0*v1*v3 - 19.0*v1*v2 - 31.0*v2*v3 + 
+                         4.0*pow(v1,2) + 25.0*pow(v2,2) + 10.0*pow(v3,2)
+            );
+            Real beta2 = 1.0/3.0*(
+                         5.0*v2*v4 - 13.0*v2*v3 - 13.0*v3*v4 + 
+                         4.0*pow(v2,2) + 13.0*pow(v3,2) + 4.0*pow(v4,2)
+            );
+            Real beta3 = 1.0/3.0*(
+                         11.0*v3*v5 - 31.0*v3*v4 - 19.0*v4*v5 + 
+                         10.0*pow(v3,2) + 25.0*pow(v4,2) + 4.0*pow(v5,2)
+            );
+
+            // small value for computing non-linear weights
+            constexpr Real eps = 1.0e-6;
+
+            // alpha values WENO-JS
+            Real alpha0 = d0/pow(eps+beta0, 2);
+            Real alpha1 = d1/pow(eps+beta1, 2);
+            Real alpha2 = d2/pow(eps+beta2, 2);
+            Real alpha3 = d3/pow(eps+beta2, 2);
+
+            // Normalize weights
+            Real sum_alpha = alpha0 + alpha1 + alpha2 + alpha3;
+            Real omega0 = alpha0/sum_alpha;
+            Real omega1 = alpha1/sum_alpha;
+            Real omega2 = alpha2/sum_alpha;
+            Real omega3 = alpha3/sum_alpha;
+
+            // Candidate stencils
+            Real q0 = (1.0/32.0)*(21.0*v0 - 66.0*v1 + 77.0*v2);
+            Real q1 = (1.0/32.0)*(-3.0*v1 + 14.0*v2 + 21.0*v3);
+            Real q2 = (1.0/32.0)*( 5.0*v2 + 30.0*v3  - 3.0*v4);
+            Real q3 = (1.0/32.0)*(45.0*v3 - 18.0*v4  + 5.0*v5);
+
+            // WENO-JS reconstruction
+            v_edge = omega0*q0 + omega1*q1 + omega2*q2 + omega3*q3;
+
+            break;
+        case 1:
+            // WENO-JS linear weights
+            constexpr Real d0 = 77.0/1280.0;
+            constexpr Real d1 = 693.0/1280.0;
+            constexpr Real d2 = 99.0/256.0;
+            constexpr Real d3 = 3.0/256.0;
+
+            // Compute smoothness indicators
+            Real beta0 = 1.0/3.0*(
+                         11.0*v0*v2 - 19.0*v0*v1 - 31.0*v1*v2 + 
+                         4.0*pow(v0,2) + 25.0*pow(v1,2) + 10.0*pow(v2,2)
+            );
+            Real beta1 = 1.0/3.0*(
+                         5.0*v1*v3 - 13.0*v1*v2 - 13.0*v2*v3 + 
+                         4.0*pow(v1,2) + 13.0*pow(v2,2) + 4.0*pow(v3,2)
+            );
+            Real beta2 = 1.0/3.0*(
+                         11.0*v2*v4 - 31.0*v2*v3 - 19.0*v3*v4 + 
+                         10.0*pow(v2,2) + 25.0*pow(v3,2) + 4.0*pow(v4,2)
+            );
+            Real beta3 = 1.0/3.0*(
+                         29.0*v3*v5 - 73.0*v3*v4 - 49.0*v4*v5 + 
+                         22.0*pow(v3,2) + 61.0*pow(v4,2) + 10.0*pow(v5,2)
+            );
+
+            // small value for computing non-linear weights
+            constexpr Real eps = 1.0e-6;
+
+            // alpha values WENO-JS
+            Real alpha0 = d0/pow(eps+beta0, 2);
+            Real alpha1 = d1/pow(eps+beta1, 2);
+            Real alpha2 = d2/pow(eps+beta2, 2);
+            Real alpha3 = d3/pow(eps+beta2, 2);
+
+            // Normalize weights
+            Real sum_alpha = alpha0 + alpha1 + alpha2 + alpha3;
+            Real omega0 = alpha0/sum_alpha;
+            Real omega1 = alpha1/sum_alpha;
+            Real omega2 = alpha2/sum_alpha;
+            Real omega3 = alpha3/sum_alpha;
+
+            // Candidate stencils
+            Real q0 = (1.0/32.0)*( 5.0*v0 - 18.0*v1 + 45.0*v2);
+            Real q1 = (1.0/32.0)*(-3.0*v1 + 30.0*v2 + 5.0*v3);
+            Real q2 = (1.0/32.0)*(21.0*v2 + 14.0*v3 - 3.0*v4);
+            Real q3 = (1.0/32.0)*(77.0*v3 - 66.0*v4 + 21.0*v5);
+
+            // WENO-JS reconstruction
+            v_edge = omega0*q0 + omega1*q1 + omega2*q2 + omega3*q3;
+            
+            break;
+        default:
+            amrex::Abort("Refinement ratio needs to be 2!");
+    }
+
+
 }
 
 }

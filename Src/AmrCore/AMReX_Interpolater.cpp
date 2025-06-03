@@ -1708,4 +1708,76 @@ CellWENO::interp (const FArrayBox& crse,
 }
 
 
+void
+CellWENO::restrict (const FArrayBox& fine,
+                    int              fine_comp,
+                    FArrayBox&       crse,
+                    int              crse_comp,
+                    int              ncomp,
+                    const Box&       crse_region,
+                    const IntVect&   ratio,
+                    const Geometry&  /*fine_geom*/,
+                    const Geometry&  /*crse_geom*/,
+                    Vector<BCRec> const&  /*bcr*/,
+                    int              /* actual_comp */,
+                    int              /* actual_state */,
+                    RunOn            runon)
+{
+    BL_PROFILE("CellWENO::restrict()");
+    amrex::ignore_unused(ratio);
+    AMREX_ASSERT(ratio == 2);
+
+    Box target_crse_region = crse_region & crse.box();
+
+    bool run_on_gpu = (runon == RunOn::Gpu && Gpu::inLaunchRegion());
+    amrex::ignore_unused(run_on_gpu);
+
+    Array4<Real const> const& finearr = fine.const_array(fine_comp);
+    Array4<Real>       const& crsearr = crse.array(crse_comp);
+
+#if (AMREX_SPACEDIM == 3)
+    Box bz = amrex::refine(target_crse_region, IntVect(2,2,1));
+    FArrayBox tmpz(bz, ncomp);
+#ifdef AMREX_USE_GPU
+    Elixir tmpz_eli;
+    if (run_on_gpu) { tmpz_eli = tmpz.elixir(); }
+#endif
+    Array4<Real> const& tmpzarr = tmpz.array();
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, bz, ncomp, i, j, k, n,
+    {
+        weno_restrict_z(i,j,k,n,tmpzarr,finearr);
+    });
+#endif
+
+#if (AMREX_SPACEDIM >= 2)
+    Box by = amrex::refine(target_crse_region, IntVect(AMREX_D_DECL(2,1,1)));
+    FArrayBox tmpy(by, ncomp);
+#ifdef AMREX_USE_GPU
+    Elixir tmpy_eli;
+    if (run_on_gpu) { tmpy_eli = tmpy.elixir(); }
+#endif
+    Array4<Real> const& tmpyarr = tmpy.array();
+#if (AMREX_SPACEDIM == 2)
+    Array4<Real const> srcarr = finearr;
+#else
+    Array4<Real const> srcarr = tmpz.const_array();
+#endif
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, ncomp, i, j, k, n,
+    {
+        weno_restrict_y(i,j,k,n,tmpyarr,srcarr);
+    });
+#endif
+
+#if (AMREX_SPACEDIM == 1)
+    Array4<Real const> srcarr = finearr;
+#else
+    srcarr = tmpy.const_array();
+#endif
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_crse_region, ncomp,
+                                           i, j, k, n,
+    {
+        weno_restrict_x(i,j,k,n,crsearr,srcarr);
+    });
+}
+
 }

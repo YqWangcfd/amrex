@@ -206,8 +206,6 @@ FillPatchInterp (MF& mf_fine_patch, int fcomp, MF const& mf_crse_patch, int ccom
 {
     BL_PROFILE("FillPatchInterp(Fab)");
 
-    // amrex::Print() << "FillPatchInterp: mf_fine_patch" << mf_fine_patch.boxArray() << std::endl;
-
     Box const& cdomain = amrex::convert(cgeom.Domain(), mf_fine_patch.ixType());
     int idummy=0;
 #ifdef AMREX_USE_OMP

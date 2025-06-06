@@ -670,7 +670,7 @@ void cell_quartic_restrict_z (int i, int j, int k, int n, Array4<Real> const& cr
 
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-void WENO_Interp_JS6_1(const amrex::Real& v0, const amrex::Real& v1, const amrex::Real& v2, 
+void WENO_Interp_JS6(const amrex::Real& v0, const amrex::Real& v1, const amrex::Real& v2, 
                        const amrex::Real& v3, const amrex::Real& v4, const amrex::Real& v5, 
                        amrex::Real& v_edge)
 {
@@ -729,91 +729,19 @@ void WENO_Interp_JS6_1(const amrex::Real& v0, const amrex::Real& v1, const amrex
 
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-void WENO_Interp_JS6_2(const amrex::Real& v0, const amrex::Real& v1, const amrex::Real& v2, 
-                       const amrex::Real& v3, const amrex::Real& v4, const amrex::Real& v5, 
-                       amrex::Real& v_edge)
-{
-    using namespace amrex;
-
-    // WENO-JS linear weights
-    constexpr Real d0 = 77.0/1280.0;
-    constexpr Real d1 = 693.0/1280.0;
-    constexpr Real d2 = 99.0/256.0;
-    constexpr Real d3 = 3.0/256.0;
-
-    // Compute smoothness indicators
-    Real beta0 = 1.0/3.0*(
-                    11.0*v0*v2 - 19.0*v0*v1 - 31.0*v1*v2 + 
-                    4.0*std::pow(v0,2) + 25.0*std::pow(v1,2) + 10.0*std::pow(v2,2)
-    );
-    Real beta1 = 1.0/3.0*(
-                    5.0*v1*v3 - 13.0*v1*v2 - 13.0*v2*v3 + 
-                    4.0*std::pow(v1,2) + 13.0*std::pow(v2,2) + 4.0*std::pow(v3,2)
-    );
-    Real beta2 = 1.0/3.0*(
-                    11.0*v2*v4 - 31.0*v2*v3 - 19.0*v3*v4 +
-                    10.0*std::pow(v2,2) + 25.0*std::pow(v3,2) + 4.0*std::pow(v4,2)
-    );
-    Real beta3 = 1.0/3.0*(
-                    29.0*v3*v5 - 73.0*v3*v4 - 49.0*v4*v5 + 
-                    22.0*std::pow(v3,2) + 61.0*std::pow(v4,2) + 10.0*std::pow(v5,2)
-    );
-
-    // small value for computing non-linear weights
-    constexpr Real eps = 1.0e-6;
-
-    // alpha values WENO-JS
-    Real alpha0 = d0/std::pow(eps+beta0, 2);
-    Real alpha1 = d1/std::pow(eps+beta1, 2);
-    Real alpha2 = d2/std::pow(eps+beta2, 2);
-    Real alpha3 = d3/std::pow(eps+beta2, 2);
-
-    // Normalize weights
-    Real sum_alpha = alpha0 + alpha1 + alpha2 + alpha3;
-    Real omega0 = alpha0/sum_alpha;
-    Real omega1 = alpha1/sum_alpha;
-    Real omega2 = alpha2/sum_alpha;
-    Real omega3 = alpha3/sum_alpha;
-
-    // Candidate stencils
-    Real q0 = (1.0/32.0)*( 5.0*v0 - 18.0*v1 + 45.0*v2);
-    Real q1 = (1.0/32.0)*(-3.0*v1 + 30.0*v2 + 5.0*v3);
-    Real q2 = (1.0/32.0)*(21.0*v2 + 14.0*v3 - 3.0*v4);
-    Real q3 = (1.0/32.0)*(77.0*v3 - 66.0*v4 + 21.0*v5);
-
-    // WENO-JS reconstruction
-    v_edge = omega0*q0 + omega1*q1 + omega2*q2 + omega3*q3;
-
-}
-
-AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void central_weno_interp_x (int i, int j, int k, int n, 
                             Array4<Real> const& fine,
                             Array4<Real const> const& crse) noexcept
 {
     // index 
     int ii = amrex::coarsen(i,2);
-    int s = i-ii*2;
+    int s = 2 * (i - ii*2) - 1; // i=ii*2, s = -1; i=ii*2+1, s = 1
 
-    for (int np = 0; np < n; ++np) 
-    {
-        switch(s) {
-            case 0:
-                WENO_Interp_JS6_1(crse(ii-3,j,k,np), crse(ii-2,j,k,np), 
-                                  crse(ii-1,j,k,np), crse(ii,j,k,np),
-                                  crse(ii+1,j,k,np), crse(ii+2,j,k,np),
-                                  fine(i,j,k,np));
-                break;
-            case 1:
-                WENO_Interp_JS6_2(crse(ii-2,j,k,np), crse(ii-1,j,k,np), 
-                                  crse(ii,j,k,np), crse(ii+1,j,k,np),
-                                  crse(ii+2,j,k,np), crse(ii+3,j,k,np),
-                                  fine(i,j,k,np));
-                break;
-            default:
-                amrex::Abort("Refinement ratio needs to be 2!");
-        }
-    }
+    WENO_Interp_JS6(crse(ii+s*3,j,k,n), crse(ii+s*2,j,k,n), 
+                    crse(ii+s*1,j,k,n), crse(ii,j,k,n),
+                    crse(ii-s*1,j,k,n), crse(ii-s*2,j,k,n),
+                    fine(i,j,k,n));
+
 }
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
@@ -823,57 +751,28 @@ void central_weno_interp_y (int i, int j, int k, int n,
 {
     // index 
     int jj = amrex::coarsen(j,2);
-    int s = j-jj*2;
+    int s = 2 * (j - jj*2) - 1; // j=jj*2, s = -1; j=jj*2+1, s = 1
 
-    for (int np = 0; np < n; ++np) 
-    {
-        switch(s) {
-            case 0:
-                WENO_Interp_JS6_1(crse(i,jj-3,k,np), crse(i,jj-2,k,np), 
-                                  crse(i,jj-1,k,np), crse(i,jj,k,np),
-                                  crse(i,jj+1,k,np), crse(i,jj+2,k,np),
-                                  fine(i,j,k,np));
-                break;
-            case 1:
-                WENO_Interp_JS6_2(crse(i,jj-2,k,np), crse(i,jj-1,k,np), 
-                                  crse(i,jj,k,np), crse(i,jj+1,k,np),
-                                  crse(i,jj+2,k,np), crse(i,jj+3,k,np),
-                                  fine(i,j,k,np));
-                break;
-            default:
-                amrex::Abort("Refinement ratio needs to be 2!");
-        }
-    }
+    WENO_Interp_JS6(crse(i,jj+s*3,k,n), crse(i,jj+s*2,k,n), 
+                    crse(i,jj+s*1,k,n), crse(i,jj,k,n),
+                    crse(i,jj-s*1,k,n), crse(i,jj-s*2,k,n),
+                    fine(i,j,k,n));
+
 }
-
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void central_weno_interp_z (int i, int j, int k, int n, 
                             Array4<Real> const& fine,
                             Array4<Real const> const& crse) noexcept
 {
     // index 
-    int kk = amrex::coarsen(k,2);
-    int s = k-kk*2;
+    int kk = amrex::coarsen(i,2);
+    int s = 2 * (k - kk*2) - 1; // k=kk*2, s = -1; k=kk*2+1, s = 1
 
-    for (int np = 0; np < n; ++np) 
-    {
-        switch(s) {
-            case 0:
-                WENO_Interp_JS6_1(crse(i,j,kk-3,np), crse(i,j,kk-2,np), 
-                                  crse(i,j,kk-1,np), crse(i,j,kk,np),
-                                  crse(i,j,kk+1,np), crse(i,j,kk+2,np),
-                                  fine(i,j,k,np));
-                break;
-            case 1:
-                WENO_Interp_JS6_2(crse(i,j,kk-2,np), crse(i,j,kk-1,np), 
-                                  crse(i,j,kk,np), crse(i,j,kk+1,np),
-                                  crse(i,j,kk+2,np), crse(i,j,kk+3,np),
-                                  fine(i,j,k,np));
-                break;
-            default:
-                amrex::Abort("Refinement ratio needs to be 2!");
-        }
-    }
+    WENO_Interp_JS6(crse(i,j,kk+s*3,n), crse(i,j,kk+s*2,n), 
+                    crse(i,j,kk+s*1,n), crse(i,j,kk,n),
+                    crse(i,j,kk-s*1,n), crse(i,j,kk-s*2,n),
+                    fine(i,j,k,n));
+
 }
 
 
@@ -935,6 +834,63 @@ void WENO_Restrict_JS6_c(const amrex::Real& v0, const amrex::Real& v1, const amr
 
 }
 
+// 6-point upwind WENO is very unstable
+// AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+// void WENO_Restrict_JS6_b(const amrex::Real& v0, const amrex::Real& v1, const amrex::Real& v2, 
+//                        const amrex::Real& v3, const amrex::Real& v4, const amrex::Real& v5, 
+//                        amrex::Real& v_edge)
+// {
+//     using namespace amrex;
+
+//     // WENO-JS linear weights
+//     constexpr Real d0 = 21.0/32.0;
+//     constexpr Real d1 = 63.0/160.0;
+//     constexpr Real d2 = -9.0/160.0;
+//     constexpr Real d3 =  1.0/160.0;
+
+//     // Compute smoothness indicators
+//     Real beta0 = 1.0/12.0*(
+//                     26.0*v0*v2 - 76.0*v0*v1 - 52.0*v1*v2 + 
+//                     25.0*std::pow(v0,2) + 64.0*std::pow(v1,2) + 13.0*std::pow(v2,2)
+//     );
+//     Real beta1 = 1.0/12.0*(
+//                     74.0*v1*v3 - 196.0*v1*v2 - 124.0*v2*v3 + 
+//                     61.0*std::pow(v1,2) + 160.0*std::pow(v2,2) + 25.0*std::pow(v3,2)
+//     );
+//     Real beta2 = 1.0/12.0*(
+//                     170.0*v2*v4 - 412.0*v2*v3 - 292.0*v3*v4 +
+//                     121.0*std::pow(v2,2) + 352.0*std::pow(v3,2) + 61.0*std::pow(v4,2)
+//     );
+//     Real beta3 = 1.0/12.0*(
+//                     314.0*v3*v5 - 724.0*v3*v4 - 556.0*v4*v5 + 
+//                     205.0*std::pow(v3,2) + 640.0*std::pow(v4,2) + 121.0*std::pow(v5,2)
+//     );
+
+//     // small value for computing non-linear weights
+//     constexpr Real eps = 1.0e-6;
+
+//     // alpha values WENO-JS
+//     Real alpha0 = d0/std::pow(eps+beta0, 2);
+//     Real alpha1 = d1/std::pow(eps+beta1, 2);
+//     Real alpha2 = d2/std::pow(eps+beta2, 2);
+//     Real alpha3 = d3/std::pow(eps+beta2, 2);
+
+//     // Normalize weights
+//     Real sum_alpha = alpha0 + alpha1 + alpha2 + alpha3;
+//     Real omega0 = alpha0/sum_alpha;
+//     Real omega1 = alpha1/sum_alpha;
+//     Real omega2 = alpha2/sum_alpha;
+//     Real omega3 = alpha3/sum_alpha;
+
+//     // Candidate stencils
+//     Real q0 = (1.0/8.0)*( 3.0*v0 + 6.0*v1 - 1.0*v2);
+//     Real q1 = (1.0/8.0)*(15.0*v1 -10.0*v2 + 3.0*v3);
+//     Real q2 = (1.0/8.0)*(35.0*v2 -42.0*v3 + 15.0*v4);
+//     Real q3 = (1.0/8.0)*(63.0*v3 -90.0*v4 + 35.0*v5);
+
+//     // WENO-JS reconstruction
+//     v_edge = omega0*q0 + omega1*q1 + omega2*q2 + omega3*q3;
+// }
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void WENO_Restrict_JS6_b(const amrex::Real& v0, const amrex::Real& v1, const amrex::Real& v2, 
@@ -943,57 +899,9 @@ void WENO_Restrict_JS6_b(const amrex::Real& v0, const amrex::Real& v1, const amr
 {
     using namespace amrex;
 
-    // WENO-JS linear weights
-    constexpr Real d0 = 21.0/32.0;
-    constexpr Real d1 = 63.0/160.0;
-    constexpr Real d2 = -9.0/160.0;
-    constexpr Real d3 =  1.0/160.0;
-
-    // Compute smoothness indicators
-    Real beta0 = 1.0/12.0*(
-                    26.0*v0*v2 - 76.0*v0*v1 - 52.0*v1*v2 + 
-                    25.0*std::pow(v0,2) + 64.0*std::pow(v1,2) + 13.0*std::pow(v2,2)
-    );
-    Real beta1 = 1.0/12.0*(
-                    74.0*v1*v3 - 196.0*v1*v2 - 124.0*v2*v3 + 
-                    61.0*std::pow(v1,2) + 160.0*std::pow(v2,2) + 25.0*std::pow(v3,2)
-    );
-    Real beta2 = 1.0/12.0*(
-                    170.0*v2*v4 - 412.0*v2*v3 - 292.0*v3*v4 +
-                    121.0*std::pow(v2,2) + 352.0*std::pow(v3,2) + 61.0*std::pow(v4,2)
-    );
-    Real beta3 = 1.0/12.0*(
-                    314.0*v3*v5 - 724.0*v3*v4 - 556.0*v4*v5 + 
-                    205.0*std::pow(v3,2) + 640.0*std::pow(v4,2) + 121.0*std::pow(v5,2)
-    );
-
-    // small value for computing non-linear weights
-    constexpr Real eps = 1.0e-6;
-
-    // alpha values WENO-JS
-    Real alpha0 = d0/std::pow(eps+beta0, 2);
-    Real alpha1 = d1/std::pow(eps+beta1, 2);
-    Real alpha2 = d2/std::pow(eps+beta2, 2);
-    Real alpha3 = d3/std::pow(eps+beta2, 2);
-
-    // Normalize weights
-    Real sum_alpha = alpha0 + alpha1 + alpha2 + alpha3;
-    Real omega0 = alpha0/sum_alpha;
-    Real omega1 = alpha1/sum_alpha;
-    Real omega2 = alpha2/sum_alpha;
-    Real omega3 = alpha3/sum_alpha;
-
-    // Candidate stencils
-    Real q0 = (1.0/8.0)*( 3.0*v0 + 6.0*v1 - 1.0*v2);
-    Real q1 = (1.0/8.0)*(15.0*v1 -10.0*v2 + 3.0*v3);
-    Real q2 = (1.0/8.0)*(35.0*v2 -42.0*v3 + 15.0*v4);
-    Real q3 = (1.0/8.0)*(63.0*v3 -90.0*v4 + 35.0*v5);
-
-    // WENO-JS reconstruction
-    v_edge = omega0*q0 + omega1*q1 + omega2*q2 + omega3*q3;
-
+    // 2nd-order Lagragnge interpolation
+    v_edge = (1.0/8.0)*( 3.0*v0 + 6.0*v1 - 1.0*v2);
 }
-
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void cell_cons_restrict(const amrex::Real& v0, const amrex::Real& v1, amrex::Real& v_edge)
@@ -1014,17 +922,17 @@ void weno_restrict_x (int i, int j, int k, int n, Array4<Real> const& crse,
                             fine(ii+2,j,k,n), fine(ii+3,j,k,n),
                             crse(i,j,k,n));
     } else if (i == small_end) {
-        // WENO_Restrict_JS6_b(fine(ii,j,k,n),   fine(ii+1,j,k,n),
-        //                     fine(ii+2,j,k,n), fine(ii+3,j,k,n),
-        //                     fine(ii+4,j,k,n), fine(ii+5,j,k,n),
-        //                     crse(i,j,k,n));
-        cell_cons_restrict(fine(ii,j,k,n), fine(ii+1,j,k,n), crse(i,j,k,n));
+        WENO_Restrict_JS6_b(fine(ii,j,k,n),   fine(ii+1,j,k,n),
+                            fine(ii+2,j,k,n), fine(ii+3,j,k,n),
+                            fine(ii+4,j,k,n), fine(ii+5,j,k,n),
+                            crse(i,j,k,n));
+        // cell_cons_restrict(fine(ii,j,k,n), fine(ii+1,j,k,n), crse(i,j,k,n));
     } else if (i == big_end) {
-        // WENO_Restrict_JS6_b(fine(ii+1,j,k,n), fine(ii,j,k,n),
-        //                     fine(ii-1,j,k,n), fine(ii-2,j,k,n),
-        //                     fine(ii-3,j,k,n), fine(ii-4,j,k,n),
-        //                     crse(i,j,k,n));
-        cell_cons_restrict(fine(ii,j,k,n), fine(ii+1,j,k,n), crse(i,j,k,n));
+        WENO_Restrict_JS6_b(fine(ii+1,j,k,n), fine(ii,j,k,n),
+                            fine(ii-1,j,k,n), fine(ii-2,j,k,n),
+                            fine(ii-3,j,k,n), fine(ii-4,j,k,n),
+                            crse(i,j,k,n));
+        // cell_cons_restrict(fine(ii,j,k,n), fine(ii+1,j,k,n), crse(i,j,k,n));
     } else {
         amrex::Abort("weno_restrict_x: how did this happen?");
     }
@@ -1042,17 +950,17 @@ void weno_restrict_y (int i, int j, int k, int n, Array4<Real> const& crse,
                             fine(i,jj+2,k,n), fine(i,jj+3,k,n),
                             crse(i,j,k,n));
     } else if (j == small_end) {
-        // WENO_Restrict_JS6_b(fine(i,jj,k,n),   fine(i,jj+1,k,n),
-        //                     fine(i,jj+2,k,n), fine(i,jj+3,k,n),
-        //                     fine(i,jj+4,k,n), fine(i,jj+5,k,n),
-        //                     crse(i,j,k,n));
-        cell_cons_restrict(fine(i,jj,k,n), fine(i,jj+1,k,n), crse(i,j,k,n));
+        WENO_Restrict_JS6_b(fine(i,jj,k,n),   fine(i,jj+1,k,n),
+                            fine(i,jj+2,k,n), fine(i,jj+3,k,n),
+                            fine(i,jj+4,k,n), fine(i,jj+5,k,n),
+                            crse(i,j,k,n));
+        // cell_cons_restrict(fine(i,jj,k,n), fine(i,jj+1,k,n), crse(i,j,k,n));
     } else if (j == big_end) {
-        // WENO_Restrict_JS6_b(fine(i,jj+1,k,n), fine(i,jj,k,n),
-        //                     fine(i,jj-1,k,n), fine(i,jj-2,k,n),
-        //                     fine(i,jj-3,k,n), fine(i,jj-4,k,n),
-        //                     crse(i,j,k,n));
-        cell_cons_restrict(fine(i,jj,k,n), fine(i,jj+1,k,n), crse(i,j,k,n));
+        WENO_Restrict_JS6_b(fine(i,jj+1,k,n), fine(i,jj,k,n),
+                            fine(i,jj-1,k,n), fine(i,jj-2,k,n),
+                            fine(i,jj-3,k,n), fine(i,jj-4,k,n),
+                            crse(i,j,k,n));
+        // cell_cons_restrict(fine(i,jj,k,n), fine(i,jj+1,k,n), crse(i,j,k,n));
     } else {
         amrex::Abort("weno_restrict_y:  how did this happen?");
     }
@@ -1069,17 +977,17 @@ void weno_restrict_z (int i, int j, int k, int n, Array4<Real> const& crse,
                             fine(i,j,kk+2,n), fine(i,j,kk+3,n),
                             crse(i,j,k,n));
     } else if (k == small_end) {
-        // WENO_Restrict_JS6_b(fine(i,j,kk,n),   fine(i,j,kk+1,n),
-        //                     fine(i,j,kk+2,n), fine(i,j,kk+3,n),
-        //                     fine(i,j,kk+4,n), fine(i,j,kk+5,n),
-        //                     crse(i,j,k,n));
-        cell_cons_restrict(fine(i,j,kk,n), fine(i,j,kk+1,n), crse(i,j,k,n));
+        WENO_Restrict_JS6_b(fine(i,j,kk,n),   fine(i,j,kk+1,n),
+                            fine(i,j,kk+2,n), fine(i,j,kk+3,n),
+                            fine(i,j,kk+4,n), fine(i,j,kk+5,n),
+                            crse(i,j,k,n));
+        // cell_cons_restrict(fine(i,j,kk,n), fine(i,j,kk+1,n), crse(i,j,k,n));
     } else if (k == big_end) {
-        // WENO_Restrict_JS6_b(fine(i,j,kk+1,n), fine(i,j,kk,n),
-        //                     fine(i,j,kk-1,n), fine(i,j,kk-2,n),
-        //                     fine(i,j,kk-3,n), fine(i,j,kk-4,n),
-        //                     crse(i,j,k,n));
-        cell_cons_restrict(fine(i,j,kk,n), fine(i,j,kk+1,n), crse(i,j,k,n));
+        WENO_Restrict_JS6_b(fine(i,j,kk+1,n), fine(i,j,kk,n),
+                            fine(i,j,kk-1,n), fine(i,j,kk-2,n),
+                            fine(i,j,kk-3,n), fine(i,j,kk-4,n),
+                            crse(i,j,k,n));
+        // cell_cons_restrict(fine(i,j,kk,n), fine(i,j,kk+1,n), crse(i,j,k,n));
     } else {
         amrex::Abort("weno_restrict_z:  how did this happen?");
     }

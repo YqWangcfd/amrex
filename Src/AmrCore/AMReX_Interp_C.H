@@ -922,17 +922,17 @@ void weno_restrict_x (int i, int j, int k, int n, Array4<Real> const& crse,
                             fine(ii+2,j,k,n), fine(ii+3,j,k,n),
                             crse(i,j,k,n));
     } else if (i == small_end) {
-        WENO_Restrict_JS6_b(fine(ii,j,k,n),   fine(ii+1,j,k,n),
-                            fine(ii+2,j,k,n), fine(ii+3,j,k,n),
-                            fine(ii+4,j,k,n), fine(ii+5,j,k,n),
-                            crse(i,j,k,n));
-        // cell_cons_restrict(fine(ii,j,k,n), fine(ii+1,j,k,n), crse(i,j,k,n));
+        // WENO_Restrict_JS6_b(fine(ii,j,k,n),   fine(ii+1,j,k,n),
+        //                     fine(ii+2,j,k,n), fine(ii+3,j,k,n),
+        //                     fine(ii+4,j,k,n), fine(ii+5,j,k,n),
+        //                     crse(i,j,k,n));
+        cell_cons_restrict(fine(ii,j,k,n), fine(ii+1,j,k,n), crse(i,j,k,n));
     } else if (i == big_end) {
-        WENO_Restrict_JS6_b(fine(ii+1,j,k,n), fine(ii,j,k,n),
-                            fine(ii-1,j,k,n), fine(ii-2,j,k,n),
-                            fine(ii-3,j,k,n), fine(ii-4,j,k,n),
-                            crse(i,j,k,n));
-        // cell_cons_restrict(fine(ii,j,k,n), fine(ii+1,j,k,n), crse(i,j,k,n));
+        // WENO_Restrict_JS6_b(fine(ii+1,j,k,n), fine(ii,j,k,n),
+        //                     fine(ii-1,j,k,n), fine(ii-2,j,k,n),
+        //                     fine(ii-3,j,k,n), fine(ii-4,j,k,n),
+        //                     crse(i,j,k,n));
+        cell_cons_restrict(fine(ii,j,k,n), fine(ii+1,j,k,n), crse(i,j,k,n));
     } else {
         amrex::Abort("weno_restrict_x: how did this happen?");
     }
@@ -950,17 +950,17 @@ void weno_restrict_y (int i, int j, int k, int n, Array4<Real> const& crse,
                             fine(i,jj+2,k,n), fine(i,jj+3,k,n),
                             crse(i,j,k,n));
     } else if (j == small_end) {
-        WENO_Restrict_JS6_b(fine(i,jj,k,n),   fine(i,jj+1,k,n),
-                            fine(i,jj+2,k,n), fine(i,jj+3,k,n),
-                            fine(i,jj+4,k,n), fine(i,jj+5,k,n),
-                            crse(i,j,k,n));
-        // cell_cons_restrict(fine(i,jj,k,n), fine(i,jj+1,k,n), crse(i,j,k,n));
+        // WENO_Restrict_JS6_b(fine(i,jj,k,n),   fine(i,jj+1,k,n),
+        //                     fine(i,jj+2,k,n), fine(i,jj+3,k,n),
+        //                     fine(i,jj+4,k,n), fine(i,jj+5,k,n),
+        //                     crse(i,j,k,n));
+        cell_cons_restrict(fine(i,jj,k,n), fine(i,jj+1,k,n), crse(i,j,k,n));
     } else if (j == big_end) {
-        WENO_Restrict_JS6_b(fine(i,jj+1,k,n), fine(i,jj,k,n),
-                            fine(i,jj-1,k,n), fine(i,jj-2,k,n),
-                            fine(i,jj-3,k,n), fine(i,jj-4,k,n),
-                            crse(i,j,k,n));
-        // cell_cons_restrict(fine(i,jj,k,n), fine(i,jj+1,k,n), crse(i,j,k,n));
+        // WENO_Restrict_JS6_b(fine(i,jj+1,k,n), fine(i,jj,k,n),
+        //                     fine(i,jj-1,k,n), fine(i,jj-2,k,n),
+        //                     fine(i,jj-3,k,n), fine(i,jj-4,k,n),
+        //                     crse(i,j,k,n));
+        cell_cons_restrict(fine(i,jj,k,n), fine(i,jj+1,k,n), crse(i,j,k,n));
     } else {
         amrex::Abort("weno_restrict_y:  how did this happen?");
     }
@@ -977,17 +977,17 @@ void weno_restrict_z (int i, int j, int k, int n, Array4<Real> const& crse,
                             fine(i,j,kk+2,n), fine(i,j,kk+3,n),
                             crse(i,j,k,n));
     } else if (k == small_end) {
-        WENO_Restrict_JS6_b(fine(i,j,kk,n),   fine(i,j,kk+1,n),
-                            fine(i,j,kk+2,n), fine(i,j,kk+3,n),
-                            fine(i,j,kk+4,n), fine(i,j,kk+5,n),
-                            crse(i,j,k,n));
-        // cell_cons_restrict(fine(i,j,kk,n), fine(i,j,kk+1,n), crse(i,j,k,n));
+        // WENO_Restrict_JS6_b(fine(i,j,kk,n),   fine(i,j,kk+1,n),
+        //                     fine(i,j,kk+2,n), fine(i,j,kk+3,n),
+        //                     fine(i,j,kk+4,n), fine(i,j,kk+5,n),
+        //                     crse(i,j,k,n));
+        cell_cons_restrict(fine(i,j,kk,n), fine(i,j,kk+1,n), crse(i,j,k,n));
     } else if (k == big_end) {
-        WENO_Restrict_JS6_b(fine(i,j,kk+1,n), fine(i,j,kk,n),
-                            fine(i,j,kk-1,n), fine(i,j,kk-2,n),
-                            fine(i,j,kk-3,n), fine(i,j,kk-4,n),
-                            crse(i,j,k,n));
-        // cell_cons_restrict(fine(i,j,kk,n), fine(i,j,kk+1,n), crse(i,j,k,n));
+        // WENO_Restrict_JS6_b(fine(i,j,kk+1,n), fine(i,j,kk,n),
+        //                     fine(i,j,kk-1,n), fine(i,j,kk-2,n),
+        //                     fine(i,j,kk-3,n), fine(i,j,kk-4,n),
+        //                     crse(i,j,k,n));
+        cell_cons_restrict(fine(i,j,kk,n), fine(i,j,kk+1,n), crse(i,j,k,n));
     } else {
         amrex::Abort("weno_restrict_z:  how did this happen?");
     }

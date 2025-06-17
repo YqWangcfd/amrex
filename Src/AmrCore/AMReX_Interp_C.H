@@ -837,17 +837,6 @@ void WENO_Interp_Unified(const amrex::Real& v0, const amrex::Real& v1, const amr
     v_edge = result;
 }
 
-
-// Legacy function for backward compatibility (ratio=2 only)
-AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-void WENO_Interp_JS6(const amrex::Real& v0, const amrex::Real& v1, const amrex::Real& v2, 
-                     const amrex::Real& v3, const amrex::Real& v4, const amrex::Real& v5, 
-                     amrex::Real& v_edge)
-{
-    WENO_Interp_Unified(v0, v1, v2, v3, v4, v5, 0, 0, v_edge);
-}
-
-
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void central_weno_interp_x (int i, int j, int k, int n, 
                             Array4<Real> const& fine,
@@ -956,6 +945,25 @@ namespace {
         }
     };
 
+    // Smoothness indicator coefficients [coeff_idx][term_idx]
+    // beta = c0*v0*v2 + c1*v0*v1 + c2*v1*v2 + c3*v0^2 + c4*v1^2 + c5*v2^2
+    AMREX_GPU_CONSTANT Real weno_restrict_beta_coeffs[2][4][6] = {
+        // central
+        {
+            {74.0, -124.0, -196.0, 25.0, 160.0, 61.0}/12.0,  // beta0
+            {26.0,  -52.0,  -76.0, 13.0,  64.0, 25.0}/12.0,  // beta1
+            {26.0,  -76.0,  -52.0, 25.0,  64.0, 13.0}/12.0,  // beta2
+            {74.0, -196.0, -124.0, 61.0, 160.0, 25.0}/12.0   // beta3
+        },
+        // boundary
+        {
+            {26.0,   -52.0,  -76.0,  13.0,  64.0, 25.0}/12.0,
+            {26.0,   -76.0,  -52.0,  25.0,  64.0, 13.0}/12.0,
+            {74.0,  -196.0, -124.0,  61.0, 160.0, 25.0}/12.0,
+            {170.0, -412.0, -292.0, 121.0, 352.0, 61.0}/12.0
+        }
+    };
+
     // Stencil coefficients for restriction [ratio_idx][use_eno][stencil_idx][coeff_idx]
     AMREX_GPU_CONSTANT Real weno_restrict_stencil_coeffs[2][2][4][3] = {
         // ratio = 2
@@ -979,10 +987,10 @@ namespace {
         {
             // central WENO scheme
             {
-                {-1.0/8.0, 6.0/8.0, 3.0/8.0},      // q0
-                {3.0/8.0, 6.0/8.0, -1.0/8.0},      // q1
-                {15.0/8.0, -10.0/8.0, 3.0/8.0},    // q2
-                {35.0/8.0, -42.0/8.0, 15.0/8.0}    // q3
+                {3.0/8.0, -10.0/8.0, 15.0/8.0},    // q0
+                {-1.0/8.0, 6.0/8.0, 3.0/8.0},      // q1
+                {3.0/8.0, 6.0/8.0, -1.0/8.0},      // q2
+                {15.0/8.0, -10.0/8.0, 3.0/8.0}     // q3
             },
             // boundary WENO scheme
             {
@@ -1020,6 +1028,25 @@ namespace {
         }
     };
 
+    // Smoothness indicator coefficients [coeff_idx][term_idx]
+    // beta = c0*v0*v2 + c1*v0*v1 + c2*v1*v2 + c3*v0^2 + c4*v1^2 + c5*v2^2
+    Real weno_restrict_beta_coeffs[2][4][6] = {
+        // central
+        {
+            {74.0/12.0, -124.0/12.0, -196.0/12.0, 25.0/12.0, 160.0/12.0, 61.0/12.0},  // beta0
+            {26.0/12.0,  -52.0/12.0,  -76.0/12.0, 13.0/12.0,  64.0/12.0, 25.0/12.0},  // beta1
+            {26.0/12.0,  -76.0/12.0,  -52.0/12.0, 25.0/12.0,  64.0/12.0, 13.0/12.0},  // beta2
+            {74.0/12.0, -196.0/12.0, -124.0/12.0, 61.0/12.0, 160.0/12.0, 25.0/12.0}   // beta3
+        },
+        // boundary
+        {
+            {26.0/12.0,   -52.0/12.0,  -76.0/12.0,  13.0/12.0,  64.0/12.0, 25.0/12.0},
+            {26.0/12.0,   -76.0/12.0,  -52.0/12.0,  25.0/12.0,  64.0/12.0, 13.0/12.0},
+            {74.0/12.0,  -196.0/12.0, -124.0/12.0,  61.0/12.0, 160.0/12.0, 25.0/12.0},
+            {170.0/12.0, -412.0/12.0, -292.0/12.0, 121.0/12.0, 352.0/12.0, 61.0/12.0}
+        }
+    };
+
     // Stencil coefficients for restriction [ratio_idx][use_eno][stencil_idx][coeff_idx]
     Real weno_restrict_stencil_coeffs[2][2][4][3] = {
         // ratio = 2
@@ -1043,10 +1070,10 @@ namespace {
         {
             // central WENO scheme
             {
-                {-1.0/8.0, 6.0/8.0, 3.0/8.0},      // q0
-                {3.0/8.0, 6.0/8.0, -1.0/8.0},      // q1
-                {15.0/8.0, -10.0/8.0, 3.0/8.0},    // q2
-                {35.0/8.0, -42.0/8.0, 15.0/8.0}    // q3
+                {3.0/8.0, -10.0/8.0, 15.0/8.0},    // q0
+                {-1.0/8.0, 6.0/8.0, 3.0/8.0},      // q1  
+                {3.0/8.0, 6.0/8.0, -1.0/8.0},      // q2
+                {15.0/8.0, -10.0/8.0, 3.0/8.0}     // q3
             },
             // boundary WENO scheme
             {
@@ -1085,11 +1112,14 @@ void WENO_Restrict_Unified(const amrex::Real& v0, const amrex::Real& v1, const a
 
     // WENO reconstruction
     Real vals[6] = {v0, v1, v2, v3, v4, v5};
-    
+        
+    // Select appropriate linear weights based on use_eno
+    int pos_idx = is_boundary ? 1 : 0;
+
     // Compute smoothness indicators using the same beta coefficients as in WENO_Interp_Unified
     Real beta[4];
     for (int k = 0; k < 4; ++k) {
-        const Real* coeffs = weno_beta_coeffs[k];
+        const Real* coeffs = weno_restrict_beta_coeffs[pos_idx][k];
         Real v[3] = {vals[k], vals[k+1], vals[k+2]};
         beta[k] = coeffs[0]*v[0]*v[2] + coeffs[1]*v[0]*v[1] + coeffs[2]*v[1]*v[2] +
                   coeffs[3]*v[0]*v[0] + coeffs[4]*v[1]*v[1] + coeffs[5]*v[2]*v[2];
@@ -1097,10 +1127,7 @@ void WENO_Restrict_Unified(const amrex::Real& v0, const amrex::Real& v1, const a
     
     // Small value for computing non-linear weights
     constexpr Real eps = 1.0e-6;
-    
-    // Select appropriate linear weights based on use_eno
-    int pos_idx = is_boundary ? 1 : 0;
-    
+
     // Compute alpha values and normalize
     Real alpha[4], sum_alpha = 0.0;
     for (int k = 0; k < 4; ++k) {
@@ -1134,19 +1161,17 @@ void weno_restrict_x (int i, int j, int k, int n, Array4<Real> const& crse,
                                 fine(ii,j,k,n),   fine(ii+1,j,k,n),
                                 fine(ii+2,j,k,n), fine(ii+3,j,k,n),
                                 0, false, false, crse(i,j,k,n));
-        } else if (i  == small_end) {
+        } else if (i == small_end) {
             WENO_Restrict_Unified(fine(ii,j,k,n),   fine(ii+1,j,k,n),
                                 fine(ii+2,j,k,n), fine(ii+3,j,k,n),
                                 fine(ii+4,j,k,n), fine(ii+5,j,k,n),
-                                0, false, true, crse(i,j,k,n));
-
+                                0, true, true, crse(i,j,k,n));
             // crse(i,j,k,n) = (fine(ii,j,k,n) + fine(ii+1,j,k,n))/2.0;
         } else if (i == big_end) {
             WENO_Restrict_Unified(fine(ii+1,j,k,n), fine(ii,j,k,n),
                                 fine(ii-1,j,k,n), fine(ii-2,j,k,n),
                                 fine(ii-3,j,k,n), fine(ii-4,j,k,n),
-                                0, false, true, crse(i,j,k,n));
-
+                                0, true, true, crse(i,j,k,n));
             // crse(i,j,k,n) = (fine(ii,j,k,n) + fine(ii+1,j,k,n))/2.0;
         }
     } else if (ratio[0] == 4) {
@@ -1159,13 +1184,13 @@ void weno_restrict_x (int i, int j, int k, int n, Array4<Real> const& crse,
             WENO_Restrict_Unified(fine(ii,j,k,n),   fine(ii+1,j,k,n),
                                 fine(ii+2,j,k,n), fine(ii+3,j,k,n),
                                 fine(ii+4,j,k,n), fine(ii+5,j,k,n),
-                                1, false, true, crse(i,j,k,n));
+                                1, true, true, crse(i,j,k,n));
             // crse(i,j,k,n) = (fine(ii,j,k,n) + fine(ii+1,j,k,n) + fine(ii+2,j,k,n) + fine(ii+3,j,k,n))/4.0;
         } else if (i == big_end) {
-            WENO_Restrict_Unified(fine(ii+1,j,k,n),   fine(ii,j,k,n),
+            WENO_Restrict_Unified(fine(ii+3,j,k,n),   fine(ii+2,j,k,n),
+                                fine(ii+1,j,k,n), fine(ii,j,k,n),
                                 fine(ii-1,j,k,n), fine(ii-2,j,k,n),
-                                fine(ii-3,j,k,n), fine(ii-4,j,k,n),
-                                1, false, true, crse(i,j,k,n));
+                                1, true, true, crse(i,j,k,n));
             // crse(i,j,k,n) = (fine(ii,j,k,n) + fine(ii+1,j,k,n) + fine(ii+2,j,k,n) + fine(ii+3,j,k,n))/4.0;
         }
     } else {
@@ -1189,13 +1214,13 @@ void weno_restrict_y (int i, int j, int k, int n, Array4<Real> const& crse,
             WENO_Restrict_Unified(fine(i,jj,k,n),   fine(i,jj+1,k,n),
                                 fine(i,jj+2,k,n), fine(i,jj+3,k,n),
                                 fine(i,jj+4,k,n), fine(i,jj+5,k,n),
-                                0, false, true, crse(i,j,k,n));
+                                0, true, true, crse(i,j,k,n));
             // crse(i,j,k,n) = (fine(i,jj,k,n) + fine(i,jj+1,k,n))/2.0;
         } else if (j == big_end) {
             WENO_Restrict_Unified(fine(i,jj+1,k,n), fine(i,jj,k,n),
                                 fine(i,jj-1,k,n), fine(i,jj-2,k,n),
                                 fine(i,jj-3,k,n), fine(i,jj-4,k,n),
-                                0, false, true, crse(i,j,k,n));
+                                0, true, true, crse(i,j,k,n));
             // crse(i,j,k,n) = (fine(i,jj,k,n) + fine(i,jj+1,k,n))/2.0;
         }
     } else if (ratio[1] == 4) {
@@ -1208,13 +1233,13 @@ void weno_restrict_y (int i, int j, int k, int n, Array4<Real> const& crse,
             WENO_Restrict_Unified(fine(i,jj,k,n),   fine(i,jj+1,k,n),
                                 fine(i,jj+2,k,n), fine(i,jj+3,k,n),
                                 fine(i,jj+4,k,n), fine(i,jj+5,k,n),
-                                1, false, true, crse(i,j,k,n));
+                                1, true, true, crse(i,j,k,n));
             // crse(i,j,k,n) = (fine(i,jj,k,n) + fine(i,jj+1,k,n) + fine(i,jj+2,k,n) + fine(i,jj+3,k,n))/4.0;
         } else if (j == big_end) {
-            WENO_Restrict_Unified(fine(i,jj+1,k,n),   fine(i,jj,k,n),
+            WENO_Restrict_Unified(fine(i,jj+3,k,n),   fine(i,jj+2,k,n),
+                                fine(i,jj+1,k,n), fine(i,jj,k,n),
                                 fine(i,jj-1,k,n), fine(i,jj-2,k,n),
-                                fine(i,jj-3,k,n), fine(i,jj-4,k,n),
-                                1, false, true, crse(i,j,k,n));
+                                1, true, true, crse(i,j,k,n));
             // crse(i,j,k,n) = (fine(i,jj,k,n) + fine(i,jj+1,k,n) + fine(i,jj+2,k,n) + fine(i,jj+3,k,n))/4.0;
         }
     } else {
@@ -1238,13 +1263,13 @@ void weno_restrict_z (int i, int j, int k, int n, Array4<Real> const& crse,
             WENO_Restrict_Unified(fine(i,j,kk,n),   fine(i,j,kk+1,n),
                                 fine(i,j,kk+2,n), fine(i,j,kk+3,n),
                                 fine(i,j,kk+4,n), fine(i,j,kk+5,n),
-                                0, false, true, crse(i,j,k,n));
+                                0, true, true, crse(i,j,k,n));
             // crse(i,j,k,n) = (fine(i,j,kk,n) + fine(i,j,kk+1,n))/2.0;
         } else if (k == big_end) {
             WENO_Restrict_Unified(fine(i,j,kk+1,n), fine(i,j,kk,n),
                                 fine(i,j,kk-1,n), fine(i,j,kk-2,n),
                                 fine(i,j,kk-3,n), fine(i,j,kk-4,n),
-                                0, false, true, crse(i,j,k,n));
+                                0, true, true, crse(i,j,k,n));
             // crse(i,j,k,n) = (fine(i,j,kk,n) + fine(i,j,kk+1,n))/2.0;
         }
     } else if (ratio[2] == 4) {
@@ -1257,13 +1282,13 @@ void weno_restrict_z (int i, int j, int k, int n, Array4<Real> const& crse,
             WENO_Restrict_Unified(fine(i,j,kk,n),   fine(i,j,kk+1,n),
                                 fine(i,j,kk+2,n), fine(i,j,kk+3,n),
                                 fine(i,j,kk+4,n), fine(i,j,kk+5,n),
-                                1, false, true, crse(i,j,k,n));
+                                1, true, true, crse(i,j,k,n));
             // crse(i,j,k,n) = (fine(i,j,kk,n) + fine(i,j,kk+1,n) + fine(i,j,kk+2,n) + fine(i,j,kk+3,n))/4.0;
         } else if (k == big_end) {
-            WENO_Restrict_Unified(fine(i,j,kk+1,n),   fine(i,j,kk,n),
+            WENO_Restrict_Unified(fine(i,j,kk+3,n),   fine(i,j,kk+2,n),
+                                fine(i,j,kk+1,n), fine(i,j,kk,n),
                                 fine(i,j,kk-1,n), fine(i,j,kk-2,n),
-                                fine(i,j,kk-3,n), fine(i,j,kk-4,n),
-                                1, false, true, crse(i,j,k,n));
+                                1, true, true, crse(i,j,k,n));
             // crse(i,j,k,n) = (fine(i,j,kk,n) + fine(i,j,kk+1,n) + fine(i,j,kk+2,n) + fine(i,j,kk+3,n))/4.0;
         }
     } else {

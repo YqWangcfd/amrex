@@ -1647,8 +1647,8 @@ CellWENO::interp (const FArrayBox& crse,
 {
     BL_PROFILE("CellWENO::interp()");
 
-    amrex::ignore_unused(ratio);
-    AMREX_ASSERT(ratio == 2);
+    // Support both ratio=2 and ratio=4
+    AMREX_ASSERT(ratio == 2 || ratio == 4);
 
     Box target_fine_region = fine_region & fine.box();
 
@@ -1659,7 +1659,7 @@ CellWENO::interp (const FArrayBox& crse,
     Array4<Real>       const& finearr = fine.array(fine_comp);
 
 #if (AMREX_SPACEDIM == 3)
-    Box bz = amrex::coarsen(target_fine_region, IntVect(2,2,1));
+    Box bz = amrex::coarsen(target_fine_region, IntVect(ratio[0],ratio[1],1));
     bz.grow(IntVect(3,3,0));
     FArrayBox tmpz(bz, ncomp);
 #ifdef AMREX_USE_GPU
@@ -1669,12 +1669,12 @@ CellWENO::interp (const FArrayBox& crse,
     Array4<Real> const& tmpzarr = tmpz.array();
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, bz, ncomp, i, j, k, n,
     {
-        central_weno_interp_z(i,j,k,n,tmpzarr,crsearr);
+        central_weno_interp_z(i,j,k,n,tmpzarr,crsearr,ratio);
     });
 #endif
 
 #if (AMREX_SPACEDIM >= 2)
-    Box by = amrex::coarsen(target_fine_region, IntVect(AMREX_D_DECL(2,1,1)));
+    Box by = amrex::coarsen(target_fine_region, IntVect(AMREX_D_DECL(ratio[0],1,1)));
     by.grow(IntVect(AMREX_D_DECL(3,0,0)));
     FArrayBox tmpy(by, ncomp);
 #ifdef AMREX_USE_GPU
@@ -1687,11 +1687,10 @@ CellWENO::interp (const FArrayBox& crse,
 #else
     Array4<Real const> srcarr = tmpz.const_array();
 #endif
-    // amrex::Print() << "crse.box()" << crse.box() << std::endl;
 
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, ncomp, i, j, k, n,
     {
-        central_weno_interp_y(i,j,k,n,tmpyarr,srcarr);
+        central_weno_interp_y(i,j,k,n,tmpyarr,srcarr,ratio);
     });
 #endif
 
@@ -1703,7 +1702,7 @@ CellWENO::interp (const FArrayBox& crse,
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_fine_region, ncomp,
                                            i, j, k, n,
     {
-        central_weno_interp_x(i,j,k,n,finearr,srcarr);
+        central_weno_interp_x(i,j,k,n,finearr,srcarr,ratio);
    });
 }
 
@@ -1724,8 +1723,9 @@ CellWENO::restrict (const FArrayBox& fine,
                     RunOn            runon)
 {
     BL_PROFILE("CellWENO::restrict()");
-    amrex::ignore_unused(ratio);
-    AMREX_ASSERT(ratio == 2);
+    
+    // Support both ratio=2 and ratio=4
+    AMREX_ASSERT(ratio == 2 || ratio == 4);
 
     Box target_crse_region = crse_region & crse.box();
 
@@ -1736,7 +1736,7 @@ CellWENO::restrict (const FArrayBox& fine,
     Array4<Real>       const& crsearr = crse.array(crse_comp);
 
 #if (AMREX_SPACEDIM == 3)
-    Box bz = amrex::refine(target_crse_region, IntVect(2,2,1));
+    Box bz = amrex::refine(target_crse_region, IntVect(ratio[0],ratio[1],1));
     FArrayBox tmpz(bz, ncomp);
 #ifdef AMREX_USE_GPU
     Elixir tmpz_eli;
@@ -1745,12 +1745,12 @@ CellWENO::restrict (const FArrayBox& fine,
     Array4<Real> const& tmpzarr = tmpz.array();
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, bz, ncomp, i, j, k, n,
     {
-        weno_restrict_z(i,j,k,n,tmpzarr,finearr);
+        weno_restrict_z(i,j,k,n,tmpzarr,finearr,ratio);
     });
 #endif
 
 #if (AMREX_SPACEDIM >= 2)
-    Box by = amrex::refine(target_crse_region, IntVect(AMREX_D_DECL(2,1,1)));
+    Box by = amrex::refine(target_crse_region, IntVect(AMREX_D_DECL(ratio[0],1,1)));
     FArrayBox tmpy(by, ncomp);
 #ifdef AMREX_USE_GPU
     Elixir tmpy_eli;
@@ -1764,7 +1764,7 @@ CellWENO::restrict (const FArrayBox& fine,
 #endif
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, ncomp, i, j, k, n,
     {
-        weno_restrict_y(i,j,k,n,tmpyarr,srcarr);
+        weno_restrict_y(i,j,k,n,tmpyarr,srcarr,ratio);
     });
 #endif
 
@@ -1776,7 +1776,7 @@ CellWENO::restrict (const FArrayBox& fine,
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_crse_region, ncomp,
                                            i, j, k, n,
     {
-        weno_restrict_x(i,j,k,n,crsearr,srcarr);
+        weno_restrict_x(i,j,k,n,crsearr,srcarr,ratio);
     });
 }
 

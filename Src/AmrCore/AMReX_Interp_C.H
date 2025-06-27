@@ -1003,11 +1003,15 @@ namespace {
     };
 
     // Simple 2nd order Lagrange coefficients for boundary cases [ratio_idx]
-    AMREX_GPU_CONSTANT Real eno_restrict_coeffs[2][3] = {
+    AMREX_GPU_CONSTANT Real eno_restrict_coeffs[2][4] = {
+        // // ratio = 2
+        // {3.0/8.0, 6.0/8.0, -1.0/8.0},
+        // // ratio = 4
+        // {-1.0/8.0, 6.0/8.0, 3.0/8.0}
         // ratio = 2
-        {3.0/8.0, 6.0/8.0, -1.0/8.0},
+        {1.0/2.0, 1.0/2.0, 0.0, 0.0},
         // ratio = 4
-        {-1.0/8.0, 6.0/8.0, 3.0/8.0}
+        {1.0/4.0, 1.0/4.0, 1.0/4.0, 1.0/4.0}
     };
 #else
     // Linear weights for restriction operations [ratio_idx][use_eno]
@@ -1086,11 +1090,15 @@ namespace {
     };
 
     // Simple 2nd order Lagrange coefficients for boundary cases [ratio_idx]
-    Real eno_restrict_coeffs[2][3] = {
+    Real eno_restrict_coeffs[2][4] = {
+        // // ratio = 2
+        // {3.0/8.0, 6.0/8.0, -1.0/8.0},
+        // // ratio = 4
+        // {-1.0/8.0, 6.0/8.0, 3.0/8.0}
         // ratio = 2
-        {3.0/8.0, 6.0/8.0, -1.0/8.0},
+        {1.0/2.0, 1.0/2.0, 0.0, 0.0},
         // ratio = 4
-        {-1.0/8.0, 6.0/8.0, 3.0/8.0}
+        {1.0/4.0, 1.0/4.0, 1.0/4.0, 1.0/4.0}
     };
 #endif
 }
@@ -1106,10 +1114,7 @@ void WENO_Restrict_Unified(const amrex::Real& v0, const amrex::Real& v1, const a
     if (is_boundary && use_eno) {
         // Simple 2nd-order Lagrange interpolation for boundary
         const Real* coeffs = eno_restrict_coeffs[ratio_idx];
-        v_edge = coeffs[0]*v0 + coeffs[1]*v1 + coeffs[2]*v2;
-
-        // // Simple averaging
-        // v_edge = 0.25*(v0 + v1 + v2 + v3);
+        v_edge = coeffs[0]*v0 + coeffs[1]*v1 + coeffs[2]*v2 + coeffs[3]*v3;
         return;
     }
 

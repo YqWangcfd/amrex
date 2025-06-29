@@ -1170,17 +1170,17 @@ void weno_restrict_x (int i, int j, int k, int n, Array4<Real> const& crse,
                                 fine(ii+2,j,k,n), fine(ii+3,j,k,n),
                                 0, false, false, crse(i,j,k,n));
         } else if (i == small_end) {
-            WENO_Restrict_Unified(fine(ii,j,k,n),   fine(ii+1,j,k,n),
-                                fine(ii+2,j,k,n), fine(ii+3,j,k,n),
-                                fine(ii+4,j,k,n), fine(ii+5,j,k,n),
-                                0, true, true, crse(i,j,k,n));
-            // crse(i,j,k,n) = (fine(ii,j,k,n) + fine(ii+1,j,k,n))/2.0;
+            // WENO_Restrict_Unified(fine(ii,j,k,n),   fine(ii+1,j,k,n),
+            //                     fine(ii+2,j,k,n), fine(ii+3,j,k,n),
+            //                     fine(ii+4,j,k,n), fine(ii+5,j,k,n),
+            //                     0, true, true, crse(i,j,k,n));
+            crse(i,j,k,n) = (fine(ii,j,k,n) + fine(ii+1,j,k,n))/2.0;
         } else if (i == big_end) {
-            WENO_Restrict_Unified(fine(ii+1,j,k,n), fine(ii,j,k,n),
-                                fine(ii-1,j,k,n), fine(ii-2,j,k,n),
-                                fine(ii-3,j,k,n), fine(ii-4,j,k,n),
-                                0, true, true, crse(i,j,k,n));
-            // crse(i,j,k,n) = (fine(ii,j,k,n) + fine(ii+1,j,k,n))/2.0;
+            // WENO_Restrict_Unified(fine(ii+1,j,k,n), fine(ii,j,k,n),
+            //                     fine(ii-1,j,k,n), fine(ii-2,j,k,n),
+            //                     fine(ii-3,j,k,n), fine(ii-4,j,k,n),
+            //                     0, true, true, crse(i,j,k,n));
+            crse(i,j,k,n) = (fine(ii,j,k,n) + fine(ii+1,j,k,n))/2.0;
         }
     } else if (ratio[0] == 4) {
         if (i > small_end && i < big_end) {
@@ -1189,17 +1189,17 @@ void weno_restrict_x (int i, int j, int k, int n, Array4<Real> const& crse,
                                 fine(ii+3,j,k,n), fine(ii+4,j,k,n),
                                 1, false, false, crse(i,j,k,n));
         } else if (i == small_end) {
-            WENO_Restrict_Unified(fine(ii,j,k,n),   fine(ii+1,j,k,n),
-                                fine(ii+2,j,k,n), fine(ii+3,j,k,n),
-                                fine(ii+4,j,k,n), fine(ii+5,j,k,n),
-                                1, true, true, crse(i,j,k,n));
-            // crse(i,j,k,n) = (fine(ii,j,k,n) + fine(ii+1,j,k,n) + fine(ii+2,j,k,n) + fine(ii+3,j,k,n))/4.0;
+            // WENO_Restrict_Unified(fine(ii,j,k,n),   fine(ii+1,j,k,n),
+            //                     fine(ii+2,j,k,n), fine(ii+3,j,k,n),
+            //                     fine(ii+4,j,k,n), fine(ii+5,j,k,n),
+            //                     1, true, true, crse(i,j,k,n));
+            crse(i,j,k,n) = (fine(ii,j,k,n) + fine(ii+1,j,k,n) + fine(ii+2,j,k,n) + fine(ii+3,j,k,n))/4.0;
         } else if (i == big_end) {
-            WENO_Restrict_Unified(fine(ii+3,j,k,n),   fine(ii+2,j,k,n),
-                                fine(ii+1,j,k,n), fine(ii,j,k,n),
-                                fine(ii-1,j,k,n), fine(ii-2,j,k,n),
-                                1, true, true, crse(i,j,k,n));
-            // crse(i,j,k,n) = (fine(ii,j,k,n) + fine(ii+1,j,k,n) + fine(ii+2,j,k,n) + fine(ii+3,j,k,n))/4.0;
+            // WENO_Restrict_Unified(fine(ii+3,j,k,n),   fine(ii+2,j,k,n),
+            //                     fine(ii+1,j,k,n), fine(ii,j,k,n),
+            //                     fine(ii-1,j,k,n), fine(ii-2,j,k,n),
+            //                     1, true, true, crse(i,j,k,n));
+            crse(i,j,k,n) = (fine(ii,j,k,n) + fine(ii+1,j,k,n) + fine(ii+2,j,k,n) + fine(ii+3,j,k,n))/4.0;
         }
     } else {
         amrex::Abort("weno_restrict_x: how did this happen?");
@@ -1219,17 +1219,17 @@ void weno_restrict_y (int i, int j, int k, int n, Array4<Real> const& crse,
                                 fine(i,jj+2,k,n), fine(i,jj+3,k,n),
                                 0, false, false, crse(i,j,k,n));
         } else if (j == small_end) {
-            WENO_Restrict_Unified(fine(i,jj,k,n),   fine(i,jj+1,k,n),
-                                fine(i,jj+2,k,n), fine(i,jj+3,k,n),
-                                fine(i,jj+4,k,n), fine(i,jj+5,k,n),
-                                0, true, true, crse(i,j,k,n));
-            // crse(i,j,k,n) = (fine(i,jj,k,n) + fine(i,jj+1,k,n))/2.0;
+            // WENO_Restrict_Unified(fine(i,jj,k,n),   fine(i,jj+1,k,n),
+            //                     fine(i,jj+2,k,n), fine(i,jj+3,k,n),
+            //                     fine(i,jj+4,k,n), fine(i,jj+5,k,n),
+            //                     0, true, true, crse(i,j,k,n));
+            crse(i,j,k,n) = (fine(i,jj,k,n) + fine(i,jj+1,k,n))/2.0;
         } else if (j == big_end) {
-            WENO_Restrict_Unified(fine(i,jj+1,k,n), fine(i,jj,k,n),
-                                fine(i,jj-1,k,n), fine(i,jj-2,k,n),
-                                fine(i,jj-3,k,n), fine(i,jj-4,k,n),
-                                0, true, true, crse(i,j,k,n));
-            // crse(i,j,k,n) = (fine(i,jj,k,n) + fine(i,jj+1,k,n))/2.0;
+            // WENO_Restrict_Unified(fine(i,jj+1,k,n), fine(i,jj,k,n),
+            //                     fine(i,jj-1,k,n), fine(i,jj-2,k,n),
+            //                     fine(i,jj-3,k,n), fine(i,jj-4,k,n),
+            //                     0, true, true, crse(i,j,k,n));
+            crse(i,j,k,n) = (fine(i,jj,k,n) + fine(i,jj+1,k,n))/2.0;
         }
     } else if (ratio[1] == 4) {
         if (j > small_end && j < big_end) {
@@ -1238,17 +1238,17 @@ void weno_restrict_y (int i, int j, int k, int n, Array4<Real> const& crse,
                                 fine(i,jj+3,k,n), fine(i,jj+4,k,n),
                                 1, false, false, crse(i,j,k,n));
         } else if (j == small_end) {
-            WENO_Restrict_Unified(fine(i,jj,k,n),   fine(i,jj+1,k,n),
-                                fine(i,jj+2,k,n), fine(i,jj+3,k,n),
-                                fine(i,jj+4,k,n), fine(i,jj+5,k,n),
-                                1, true, true, crse(i,j,k,n));
-            // crse(i,j,k,n) = (fine(i,jj,k,n) + fine(i,jj+1,k,n) + fine(i,jj+2,k,n) + fine(i,jj+3,k,n))/4.0;
+            // WENO_Restrict_Unified(fine(i,jj,k,n),   fine(i,jj+1,k,n),
+            //                     fine(i,jj+2,k,n), fine(i,jj+3,k,n),
+            //                     fine(i,jj+4,k,n), fine(i,jj+5,k,n),
+            //                     1, true, true, crse(i,j,k,n));
+            crse(i,j,k,n) = (fine(i,jj,k,n) + fine(i,jj+1,k,n) + fine(i,jj+2,k,n) + fine(i,jj+3,k,n))/4.0;
         } else if (j == big_end) {
-            WENO_Restrict_Unified(fine(i,jj+3,k,n),   fine(i,jj+2,k,n),
-                                fine(i,jj+1,k,n), fine(i,jj,k,n),
-                                fine(i,jj-1,k,n), fine(i,jj-2,k,n),
-                                1, true, true, crse(i,j,k,n));
-            // crse(i,j,k,n) = (fine(i,jj,k,n) + fine(i,jj+1,k,n) + fine(i,jj+2,k,n) + fine(i,jj+3,k,n))/4.0;
+            // WENO_Restrict_Unified(fine(i,jj+3,k,n),   fine(i,jj+2,k,n),
+            //                     fine(i,jj+1,k,n), fine(i,jj,k,n),
+            //                     fine(i,jj-1,k,n), fine(i,jj-2,k,n),
+            //                     1, true, true, crse(i,j,k,n));
+            crse(i,j,k,n) = (fine(i,jj,k,n) + fine(i,jj+1,k,n) + fine(i,jj+2,k,n) + fine(i,jj+3,k,n))/4.0;
         }
     } else {
         amrex::Abort("weno_restrict_y: how did this happen?");
@@ -1268,17 +1268,17 @@ void weno_restrict_z (int i, int j, int k, int n, Array4<Real> const& crse,
                                 fine(i,j,kk+2,n), fine(i,j,kk+3,n),
                                 0, false, false, crse(i,j,k,n));
         } else if (k == small_end) {
-            WENO_Restrict_Unified(fine(i,j,kk,n),   fine(i,j,kk+1,n),
-                                fine(i,j,kk+2,n), fine(i,j,kk+3,n),
-                                fine(i,j,kk+4,n), fine(i,j,kk+5,n),
-                                0, true, true, crse(i,j,k,n));
-            // crse(i,j,k,n) = (fine(i,j,kk,n) + fine(i,j,kk+1,n))/2.0;
+            // WENO_Restrict_Unified(fine(i,j,kk,n),   fine(i,j,kk+1,n),
+            //                     fine(i,j,kk+2,n), fine(i,j,kk+3,n),
+            //                     fine(i,j,kk+4,n), fine(i,j,kk+5,n),
+            //                     0, true, true, crse(i,j,k,n));
+            crse(i,j,k,n) = (fine(i,j,kk,n) + fine(i,j,kk+1,n))/2.0;
         } else if (k == big_end) {
-            WENO_Restrict_Unified(fine(i,j,kk+1,n), fine(i,j,kk,n),
-                                fine(i,j,kk-1,n), fine(i,j,kk-2,n),
-                                fine(i,j,kk-3,n), fine(i,j,kk-4,n),
-                                0, true, true, crse(i,j,k,n));
-            // crse(i,j,k,n) = (fine(i,j,kk,n) + fine(i,j,kk+1,n))/2.0;
+            // WENO_Restrict_Unified(fine(i,j,kk+1,n), fine(i,j,kk,n),
+            //                     fine(i,j,kk-1,n), fine(i,j,kk-2,n),
+            //                     fine(i,j,kk-3,n), fine(i,j,kk-4,n),
+            //                     0, true, true, crse(i,j,k,n));
+            crse(i,j,k,n) = (fine(i,j,kk,n) + fine(i,j,kk+1,n))/2.0;
         }
     } else if (ratio[2] == 4) {
         if (k > small_end && k < big_end) {
@@ -1287,17 +1287,17 @@ void weno_restrict_z (int i, int j, int k, int n, Array4<Real> const& crse,
                                 fine(i,j,kk+3,n), fine(i,j,kk+4,n),
                                 1, false, false, crse(i,j,k,n));
         } else if (k == small_end) {
-            WENO_Restrict_Unified(fine(i,j,kk,n),   fine(i,j,kk+1,n),
-                                fine(i,j,kk+2,n), fine(i,j,kk+3,n),
-                                fine(i,j,kk+4,n), fine(i,j,kk+5,n),
-                                1, true, true, crse(i,j,k,n));
-            // crse(i,j,k,n) = (fine(i,j,kk,n) + fine(i,j,kk+1,n) + fine(i,j,kk+2,n) + fine(i,j,kk+3,n))/4.0;
+            // WENO_Restrict_Unified(fine(i,j,kk,n),   fine(i,j,kk+1,n),
+            //                     fine(i,j,kk+2,n), fine(i,j,kk+3,n),
+            //                     fine(i,j,kk+4,n), fine(i,j,kk+5,n),
+            //                     1, true, true, crse(i,j,k,n));
+            crse(i,j,k,n) = (fine(i,j,kk,n) + fine(i,j,kk+1,n) + fine(i,j,kk+2,n) + fine(i,j,kk+3,n))/4.0;
         } else if (k == big_end) {
-            WENO_Restrict_Unified(fine(i,j,kk+3,n),   fine(i,j,kk+2,n),
-                                fine(i,j,kk+1,n), fine(i,j,kk,n),
-                                fine(i,j,kk-1,n), fine(i,j,kk-2,n),
-                                1, true, true, crse(i,j,k,n));
-            // crse(i,j,k,n) = (fine(i,j,kk,n) + fine(i,j,kk+1,n) + fine(i,j,kk+2,n) + fine(i,j,kk+3,n))/4.0;
+            // WENO_Restrict_Unified(fine(i,j,kk+3,n),   fine(i,j,kk+2,n),
+            //                     fine(i,j,kk+1,n), fine(i,j,kk,n),
+            //                     fine(i,j,kk-1,n), fine(i,j,kk-2,n),
+            //                     1, true, true, crse(i,j,k,n));
+            crse(i,j,k,n) = (fine(i,j,kk,n) + fine(i,j,kk+1,n) + fine(i,j,kk+2,n) + fine(i,j,kk+3,n))/4.0;
         }
     } else {
         amrex::Abort("weno_restrict_z: how did this happen?");

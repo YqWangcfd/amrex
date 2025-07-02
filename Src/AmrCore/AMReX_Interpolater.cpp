@@ -1837,8 +1837,8 @@ CellWENO::restrict (const FArrayBox& fine,
             crsearr(i,j,k,n) = amrex::max(crsearr(i,j,k,n),0.0);  
         }
         crsearr(i,j,k,MT) = amrex::max(crsearr(i,j,k,MT), Tmin);
-    });
 #endif
+    });
 }
 
 }

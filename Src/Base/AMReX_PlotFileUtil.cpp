@@ -586,7 +586,8 @@ void WriteMultiLevelPlotfile_SD(const std::string& plotfilename, int nlevels,
                 int ix = i/5, iy = j/5, iz = k/5;
                 Real x = prob_lo[0] + (ix+0.5)*dx[0];
                 Real y = prob_lo[1] + (iy+0.5)*dx[1];
-                Real z = prob_lo[2] + (iz+0.5)*dx[2];
+                Real z = (AMREX_SPACEDIM==2)? 0.0:
+                prob_lo[2] + (iz+0.5)*dx[2];
 
                 mf_arr(i,j,k,0) = dx[0]*x_Legendre[ii]/2.0 + x;
                 mf_arr(i,j,k,1) = dx[1]*x_Legendre[jj]/2.0 + y;

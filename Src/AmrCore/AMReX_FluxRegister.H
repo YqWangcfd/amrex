@@ -383,7 +383,7 @@ public:
     void Reflux (MultiFab& mf, const MultiFab& volume, Orientation face,
                  Real scale, int scomp, int dcomp, int nc, const Geometry& geom);
 
-private:
+protected:
 
     //! Refinement ratio
     IntVect ratio;

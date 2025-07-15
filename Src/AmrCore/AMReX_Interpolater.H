@@ -53,6 +53,40 @@ public:
                          int              actual_state,
                          RunOn            runon) = 0;
 
+    virtual void Lagrange_interp (const FArrayBox& crse,
+                         int              crse_comp,
+                         FArrayBox&       fine,
+                         int              fine_comp,
+                         int              ncomp,
+                         const Box&       fine_region,
+                         const IntVect&   ratio,
+                         const Geometry&  crse_geom,
+                         const Geometry&  fine_geom,
+                         Vector<BCRec> const & bcr,
+                         int              actual_comp,
+                         int              actual_state,
+                         RunOn            runon)
+    {
+        amrex::Abort("Interpolater::Lagrange_interp not implemented");
+    }
+
+    virtual void restrict (const FArrayBox& fine,
+                        int              fine_comp,
+                        FArrayBox&       crse,
+                        int              crse_comp,
+                        int              ncomp,
+                        const Box&       crse_region,
+                        const IntVect&   ratio,
+                        const Geometry&  fine_geom,
+                        const Geometry&  crse_geom,
+                        Vector<BCRec> const& bcr,
+                        int              actual_comp,
+                        int              actual_state,
+                        RunOn            runon)
+    {
+        amrex::Abort("Interpolater::restrict not implemented");
+    }
+
     /**
     * \brief Coarse to fine interpolation in space for face-based data.
     *
@@ -953,6 +987,137 @@ public:
                  int              actual_comp,
                  int              actual_state,
                  RunOn            runon) override;
+
+    // void Lagrange_interp (const FArrayBox& crse,
+    //              int              crse_comp,
+    //              FArrayBox&       fine,
+    //              int              fine_comp,
+    //              int              ncomp,
+    //              const Box&       fine_region,
+    //              const IntVect&   ratio,
+    //              const Geometry&  crse_geom,
+    //              const Geometry&  fine_geom,
+    //              Vector<BCRec> const& bcr,
+    //              int              actual_comp,
+    //              int              actual_state,
+    //              RunOn            runon) override;
+    /**
+    * \brief Fine to coarse interpolation in space.
+    *
+    * \param fine
+    * \param fine_comp
+    * \param crse
+    * \param crse_comp
+    * \param ncomp
+    * \param crse_region
+    * \param ratio
+    * \param fine_geom
+    * \param crse_geom
+    * \param bcr
+    * \param actual_comp
+    * \param actual_state
+    */
+    void restrict (const FArrayBox& fine,
+                 int              fine_comp,
+                 FArrayBox&       crse,
+                 int              crse_comp,
+                 int              ncomp,
+                 const Box&       crse_region,
+                 const IntVect&   ratio,
+                 const Geometry&  fine_geom,
+                 const Geometry&  crse_geom,
+                 Vector<BCRec> const& bcr,
+                 int              actual_comp,
+                 int              actual_state,
+                 RunOn            runon) override;
+};
+
+
+/**
+* \brief Central WENO interpolation on cell centered data.
+*
+* Central WENO interpolation on cell centered data.
+*/
+class CellWENO
+    :
+    public Interpolater
+{
+public:
+    /**
+    * \brief Returns coarsened box given fine box and refinement ratio.
+    *
+    * \param fine
+    * \param ratio
+    */
+    Box CoarseBox (const Box& fine, int ratio) override;
+
+    /**
+    * \brief Returns coarsened box given fine box and refinement ratio.
+    *
+    * \param fine
+    * \param ratio
+    */
+    Box CoarseBox (const Box& fine, const IntVect& ratio) override;
+
+    /**
+    * \brief Coarse to fine interpolation in space.
+    *
+    * \param crse
+    * \param crse_comp
+    * \param fine
+    * \param fine_comp
+    * \param ncomp
+    * \param fine_region
+    * \param ratio
+    * \param crse_geom
+    * \param fine_geom
+    * \param bcr
+    * \param actual_comp
+    * \param actual_state
+    */
+    void interp (const FArrayBox& crse,
+                 int              crse_comp,
+                 FArrayBox&       fine,
+                 int              fine_comp,
+                 int              ncomp,
+                 const Box&       fine_region,
+                 const IntVect&   ratio,
+                 const Geometry&  crse_geom,
+                 const Geometry&  fine_geom,
+                 Vector<BCRec> const& bcr,
+                 int              actual_comp,
+                 int              actual_state,
+                 RunOn            runon) override;
+
+    /**
+    * \brief Fine to coarse interpolation in space.
+    *
+    * \param fine
+    * \param fine_comp
+    * \param crse
+    * \param crse_comp
+    * \param ncomp
+    * \param crse_region
+    * \param ratio
+    * \param fine_geom
+    * \param crse_geom
+    * \param bcr
+    * \param actual_comp
+    * \param actual_state
+    */
+    void restrict (const FArrayBox& fine,
+                 int              fine_comp,
+                 FArrayBox&       crse,
+                 int              crse_comp,
+                 int              ncomp,
+                 const Box&       crse_region,
+                 const IntVect&   ratio,
+                 const Geometry&  fine_geom,
+                 const Geometry&  crse_geom,
+                 Vector<BCRec> const& bcr,
+                 int              actual_comp,
+                 int              actual_state,
+                 RunOn            runon) override;
 };
 
 //! CONSTRUCT A GLOBAL OBJECT OF EACH VERSION.
@@ -968,6 +1133,7 @@ extern AMREX_EXPORT CellConservativeProtected protected_interp;
 extern AMREX_EXPORT CellConservativeQuartic   quartic_interp;
 extern AMREX_EXPORT CellQuadratic             quadratic_interp;
 extern AMREX_EXPORT CellQuartic               cell_quartic_interp;
+extern AMREX_EXPORT CellWENO                  cell_weno_interp;
 
 }
 

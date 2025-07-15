@@ -7,6 +7,7 @@
 #include <AMReX_MFInterp_C.H>
 
 #include <climits>
+#include <IndexMacro.H>
 
 namespace amrex {
 
@@ -44,6 +45,7 @@ CellConservativeQuartic   quartic_interp;
 CellBilinear              cell_bilinear_interp;
 CellQuadratic             quadratic_interp;
 CellQuartic               cell_quartic_interp;
+CellWENO                  cell_weno_interp;
 
 Box
 NodeBilinear::CoarseBox (const Box& fine,
@@ -868,7 +870,33 @@ CellConservativeLinear::interp (const FArrayBox& crse,
         });
     } else
 #elif (AMREX_SPACEDIM == 2)
-    if (crse_geom.IsRZ()) {
+    if (crse_geom.IsSPHERICAL()) {
+        Real drf = fine_geom.CellSize(0);
+        Real dtf = fine_geom.CellSize(1);
+        Real rlo = fine_geom.Offset(0);
+        Real tlo = fine_geom.Offset(1);
+        if (do_linear_limiting) {
+            AMREX_HOST_DEVICE_PARALLEL_FOR_3D_FLAG(runon, cslope_bx, i, j, k,
+            {
+                mf_cell_cons_lin_interp_llslope(i,j,k, tmp, crsearr, crse_comp, ncomp,
+                                                cdomain, ratio, bcrp);
+            });
+        } else {
+            AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, cslope_bx, ncomp, i, j, k, n,
+            {
+                amrex::ignore_unused(k);
+                mf_cell_cons_lin_interp_mcslope_sph(i, j, n, tmp, crsearr, crse_comp, ncomp,
+                                                    cdomain, ratio, bcrp, drf, rlo, dtf, tlo);
+            });
+        }
+
+        AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, fine_region, ncomp, i, j, k, n,
+        {
+            amrex::ignore_unused(k);
+            mf_cell_cons_lin_interp_sph(i, j, n, finearr, fine_comp, ctmp, crsearr, crse_comp,
+                                        ncomp, ratio, drf, rlo, dtf, tlo);
+        });
+    } else if (crse_geom.IsRZ()) {
         Real drf = fine_geom.CellSize(0);
         Real rlo = fine_geom.Offset(0);
         if (do_linear_limiting) {
@@ -1349,7 +1377,7 @@ Box
 CellQuartic::CoarseBox (const Box& fine, const IntVect& ratio)
 {
     Box crse = amrex::coarsen(fine,ratio);
-    crse.grow(2);
+    crse.grow(3);
     return crse;
 }
 
@@ -1357,9 +1385,84 @@ Box
 CellQuartic::CoarseBox (const Box& fine, int ratio)
 {
     Box crse = amrex::coarsen(fine,ratio);
-    crse.grow(2);
+    crse.grow(3);
     return crse;
 }
+
+// void
+// CellQuartic::interp (const FArrayBox& crse,
+//                      int              crse_comp,
+//                      FArrayBox&       fine,
+//                      int              fine_comp,
+//                      int              ncomp,
+//                      const Box&       fine_region,
+//                      const IntVect&   ratio,
+//                      const Geometry&  /*crse_geom*/,
+//                      const Geometry&  /*fine_geom*/,
+//                      Vector<BCRec> const&  /*bcr*/,
+//                      int              /* actual_comp */,
+//                      int              /* actual_state */,
+//                      RunOn            runon)
+// {
+//     BL_PROFILE("CellQuartic::interp()");
+//     amrex::ignore_unused(ratio);
+//     AMREX_ASSERT(ratio == 2);
+
+//     Box target_fine_region = fine_region & fine.box();
+
+//     bool run_on_gpu = (runon == RunOn::Gpu && Gpu::inLaunchRegion());
+//     amrex::ignore_unused(run_on_gpu);
+
+//     Array4<Real const> const& crsearr = crse.const_array(crse_comp);
+//     Array4<Real>       const& finearr = fine.array(fine_comp);
+
+// #if (AMREX_SPACEDIM == 3)
+//     Box bz = amrex::coarsen(target_fine_region, IntVect(2,2,1));
+//     bz.grow(IntVect(2,2,0));
+//     FArrayBox tmpz(bz, ncomp);
+// #ifdef AMREX_USE_GPU
+//     Elixir tmpz_eli;
+//     if (run_on_gpu) { tmpz_eli = tmpz.elixir(); }
+// #endif
+//     Array4<Real> const& tmpzarr = tmpz.array();
+//     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, bz, ncomp, i, j, k, n,
+//     {
+//         cell_quartic_interp_z(i,j,k,n,tmpzarr,crsearr);
+//     });
+// #endif
+
+// #if (AMREX_SPACEDIM >= 2)
+//     Box by = amrex::coarsen(target_fine_region, IntVect(AMREX_D_DECL(2,1,1)));
+//     by.grow(IntVect(AMREX_D_DECL(2,0,0)));
+//     FArrayBox tmpy(by, ncomp);
+// #ifdef AMREX_USE_GPU
+//     Elixir tmpy_eli;
+//     if (run_on_gpu) { tmpy_eli = tmpy.elixir(); }
+// #endif
+//     Array4<Real> const& tmpyarr = tmpy.array();
+// #if (AMREX_SPACEDIM == 2)
+//     Array4<Real const> srcarr = crsearr;
+// #else
+//     Array4<Real const> srcarr = tmpz.const_array();
+// #endif
+//     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, ncomp, i, j, k, n,
+//     {
+//         cell_quartic_interp_y(i,j,k,n,tmpyarr,srcarr);
+//     });
+// #endif
+
+// #if (AMREX_SPACEDIM == 1)
+//     Array4<Real const> srcarr = crsearr;
+// #else
+//     srcarr = tmpy.const_array();
+// #endif
+//     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_fine_region, ncomp,
+//                                            i, j, k, n,
+//     {
+//         cell_quartic_interp_x(i,j,k,n,finearr,srcarr);
+//    });
+// }
+
 
 void
 CellQuartic::interp (const FArrayBox& crse,
@@ -1376,7 +1479,9 @@ CellQuartic::interp (const FArrayBox& crse,
                      int              /* actual_state */,
                      RunOn            runon)
 {
-    BL_PROFILE("CellQuartic::interp()");
+    BL_PROFILE("5th-order Lagrange::interp()");
+    // amrex::Print() << "5th-order Lagrange interp: fine_box " << fine.box() << "\n";
+    // amrex::Print() << "5th-order Lagrange interp: fine_region " << fine_region << "\n";
     amrex::ignore_unused(ratio);
     AMREX_ASSERT(ratio == 2);
 
@@ -1390,7 +1495,7 @@ CellQuartic::interp (const FArrayBox& crse,
 
 #if (AMREX_SPACEDIM == 3)
     Box bz = amrex::coarsen(target_fine_region, IntVect(2,2,1));
-    bz.grow(IntVect(2,2,0));
+    bz.grow(IntVect(3,3,0));
     FArrayBox tmpz(bz, ncomp);
 #ifdef AMREX_USE_GPU
     Elixir tmpz_eli;
@@ -1399,13 +1504,13 @@ CellQuartic::interp (const FArrayBox& crse,
     Array4<Real> const& tmpzarr = tmpz.array();
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, bz, ncomp, i, j, k, n,
     {
-        cell_quartic_interp_z(i,j,k,n,tmpzarr,crsearr);
+        Lagrange5_interp_z(i,j,k,n,tmpzarr,crsearr);
     });
 #endif
 
 #if (AMREX_SPACEDIM >= 2)
     Box by = amrex::coarsen(target_fine_region, IntVect(AMREX_D_DECL(2,1,1)));
-    by.grow(IntVect(AMREX_D_DECL(2,0,0)));
+    by.grow(IntVect(AMREX_D_DECL(3,0,0)));
     FArrayBox tmpy(by, ncomp);
 #ifdef AMREX_USE_GPU
     Elixir tmpy_eli;
@@ -1417,9 +1522,11 @@ CellQuartic::interp (const FArrayBox& crse,
 #else
     Array4<Real const> srcarr = tmpz.const_array();
 #endif
+    // amrex::Print() << "crse.box()" << crse.box() << std::endl;
+
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, ncomp, i, j, k, n,
     {
-        cell_quartic_interp_y(i,j,k,n,tmpyarr,srcarr);
+        Lagrange5_interp_y(i,j,k,n,tmpyarr,srcarr);
     });
 #endif
 
@@ -1431,7 +1538,306 @@ CellQuartic::interp (const FArrayBox& crse,
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_fine_region, ncomp,
                                            i, j, k, n,
     {
-        cell_quartic_interp_x(i,j,k,n,finearr,srcarr);
+        Lagrange5_interp_x(i,j,k,n,finearr,srcarr);
+   });
+}
+
+void
+CellQuartic::restrict (const FArrayBox& fine,
+                     int              fine_comp,
+                     FArrayBox&       crse,
+                     int              crse_comp,
+                     int              ncomp,
+                     const Box&       crse_region,
+                     const IntVect&   ratio,
+                     const Geometry&  /*fine_geom*/,
+                     const Geometry&  /*crse_geom*/,
+                     Vector<BCRec> const&  /*bcr*/,
+                     int              /* actual_comp */,
+                     int              /* actual_state */,
+                     RunOn            runon)
+{
+    BL_PROFILE("CellQuartic::restrict()");
+    amrex::ignore_unused(ratio);
+    AMREX_ASSERT(ratio == 2);
+
+    Box target_crse_region = crse_region & crse.box();
+
+    bool run_on_gpu = (runon == RunOn::Gpu && Gpu::inLaunchRegion());
+    amrex::ignore_unused(run_on_gpu);
+
+    Array4<Real const> const& finearr = fine.const_array(fine_comp);
+    Array4<Real>       const& crsearr = crse.array(crse_comp);
+
+#if (AMREX_SPACEDIM == 3)
+    Box bz = amrex::refine(target_crse_region, IntVect(2,2,1));
+    FArrayBox tmpz(bz, ncomp);
+#ifdef AMREX_USE_GPU
+    Elixir tmpz_eli;
+    if (run_on_gpu) { tmpz_eli = tmpz.elixir(); }
+#endif
+    Array4<Real> const& tmpzarr = tmpz.array();
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, bz, ncomp, i, j, k, n,
+    {
+        cell_quartic_restrict_z(i,j,k,n,tmpzarr,finearr);
+    });
+#endif
+
+#if (AMREX_SPACEDIM >= 2)
+    Box by = amrex::refine(target_crse_region, IntVect(AMREX_D_DECL(2,1,1)));
+    FArrayBox tmpy(by, ncomp);
+#ifdef AMREX_USE_GPU
+    Elixir tmpy_eli;
+    if (run_on_gpu) { tmpy_eli = tmpy.elixir(); }
+#endif
+    Array4<Real> const& tmpyarr = tmpy.array();
+#if (AMREX_SPACEDIM == 2)
+    Array4<Real const> srcarr = finearr;
+#else
+    Array4<Real const> srcarr = tmpz.const_array();
+#endif
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, ncomp, i, j, k, n,
+    {
+        cell_quartic_restrict_y(i,j,k,n,tmpyarr,srcarr);
+    });
+#endif
+
+#if (AMREX_SPACEDIM == 1)
+    Array4<Real const> srcarr = finearr;
+#else
+    srcarr = tmpy.const_array();
+#endif
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_crse_region, ncomp,
+                                           i, j, k, n,
+    {
+        cell_quartic_restrict_x(i,j,k,n,crsearr,srcarr);
+    });
+}
+
+
+Box
+CellWENO::CoarseBox (const Box& fine, const IntVect& ratio)
+{
+    Box crse = amrex::coarsen(fine,ratio);
+    crse.grow(3);
+    return crse;
+}
+
+Box
+CellWENO::CoarseBox (const Box& fine, int ratio)
+{
+    Box crse = amrex::coarsen(fine,ratio);
+    crse.grow(3);
+    return crse;
+}
+
+void
+CellWENO::interp (const FArrayBox& crse,
+                     int              crse_comp,
+                     FArrayBox&       fine,
+                     int              fine_comp,
+                     int              ncomp,
+                     const Box&       fine_region,
+                     const IntVect&   ratio,
+                     const Geometry&  /*crse_geom*/,
+                     const Geometry&  /*fine_geom*/,
+                     Vector<BCRec> const&  /*bcr*/,
+                     int              /* actual_comp */,
+                     int              /* actual_state */,
+                     RunOn            runon)
+{
+    BL_PROFILE("CellWENO::interp()");
+
+    // Support both ratio=2 and ratio=4
+    AMREX_ASSERT(ratio == 2 || ratio == 4);
+
+    Box target_fine_region = fine_region & fine.box();
+
+    bool run_on_gpu = (runon == RunOn::Gpu && Gpu::inLaunchRegion());
+    amrex::ignore_unused(run_on_gpu);
+
+    Array4<Real const> const& crsearr = crse.const_array(crse_comp);
+    Array4<Real>       const& finearr = fine.array(fine_comp);
+
+#if (AMREX_SPACEDIM == 3)
+    Box bz = amrex::coarsen(target_fine_region, IntVect(ratio[0],ratio[1],1));
+    bz.grow(IntVect(3,3,0));
+    FArrayBox tmpz(bz, ncomp);
+#ifdef AMREX_USE_GPU
+    Elixir tmpz_eli;
+    if (run_on_gpu) { tmpz_eli = tmpz.elixir(); }
+#endif
+    Array4<Real> const& tmpzarr = tmpz.array();
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, bz, ncomp, i, j, k, n,
+    {
+        central_weno_interp_z(i,j,k,n,tmpzarr,crsearr,ratio);
+#ifdef USE_FUEGO_EOS
+        // facilitate robustness
+        Real rhomin = 1e-10;
+        Real Tmin = 1e-10;
+        tmpzarr(i,j,k,MRHO) = amrex::max(tmpzarr(i,j,k,MRHO), rhomin);
+        for (int n = 0; n < NSP; ++n) {
+            tmpzarr(i,j,k,n) = amrex::max(tmpzarr(i,j,k,n),0.0);  
+        }
+        tmpzarr(i,j,k,MT) = amrex::max(tmpzarr(i,j,k,MT), Tmin);
+#endif
+    });
+#endif
+
+#if (AMREX_SPACEDIM >= 2)
+    Box by = amrex::coarsen(target_fine_region, IntVect(AMREX_D_DECL(ratio[0],1,1)));
+    by.grow(IntVect(AMREX_D_DECL(3,0,0)));
+    FArrayBox tmpy(by, ncomp);
+#ifdef AMREX_USE_GPU
+    Elixir tmpy_eli;
+    if (run_on_gpu) { tmpy_eli = tmpy.elixir(); }
+#endif
+    Array4<Real> const& tmpyarr = tmpy.array();
+#if (AMREX_SPACEDIM == 2)
+    Array4<Real const> srcarr = crsearr;
+#else
+    Array4<Real const> srcarr = tmpz.const_array();
+#endif
+
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, ncomp, i, j, k, n,
+    {
+        central_weno_interp_y(i,j,k,n,tmpyarr,srcarr,ratio);
+#ifdef USE_FUEGO_EOS
+        // facilitate robustness
+        Real rhomin = 1e-10;
+        Real Tmin = 1e-10;
+        tmpyarr(i,j,k,MRHO) = amrex::max(tmpyarr(i,j,k,MRHO), rhomin);
+        for (int n = 0; n < NSP; ++n) {
+            tmpyarr(i,j,k,n) = amrex::max(tmpyarr(i,j,k,n),0.0);  
+        }
+        tmpyarr(i,j,k,MT) = amrex::max(tmpyarr(i,j,k,MT), Tmin);
+#endif
+    });
+#endif
+
+#if (AMREX_SPACEDIM == 1)
+    Array4<Real const> srcarr = crsearr;
+#else
+    srcarr = tmpy.const_array();
+#endif
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_fine_region, ncomp,
+                                           i, j, k, n,
+    {
+        central_weno_interp_x(i,j,k,n,finearr,srcarr,ratio);
+#ifdef USE_FUEGO_EOS
+        // facilitate robustness
+        Real rhomin = 1e-10;
+        Real Tmin = 1e-10;
+        finearr(i,j,k,MRHO) = amrex::max(finearr(i,j,k,MRHO), rhomin);
+        for (int n = 0; n < NSP; ++n) {
+            finearr(i,j,k,n) = amrex::max(finearr(i,j,k,n),0.0);  
+        }
+        finearr(i,j,k,MT) = amrex::max(finearr(i,j,k,MT), Tmin);
+#endif
+   });
+}
+
+
+void
+CellWENO::restrict (const FArrayBox& fine,
+                    int              fine_comp,
+                    FArrayBox&       crse,
+                    int              crse_comp,
+                    int              ncomp,
+                    const Box&       crse_region,
+                    const IntVect&   ratio,
+                    const Geometry&  /*fine_geom*/,
+                    const Geometry&  /*crse_geom*/,
+                    Vector<BCRec> const&  /*bcr*/,
+                    int              /* actual_comp */,
+                    int              /* actual_state */,
+                    RunOn            runon)
+{
+    BL_PROFILE("CellWENO::restrict()");
+    
+    // Support both ratio=2 and ratio=4
+    AMREX_ASSERT(ratio == 2 || ratio == 4);
+
+    Box target_crse_region = crse_region & crse.box();
+
+    bool run_on_gpu = (runon == RunOn::Gpu && Gpu::inLaunchRegion());
+    amrex::ignore_unused(run_on_gpu);
+
+    Array4<Real const> const& finearr = fine.const_array(fine_comp);
+    Array4<Real>       const& crsearr = crse.array(crse_comp);
+
+#if (AMREX_SPACEDIM == 3)
+    Box bz = amrex::refine(target_crse_region, IntVect(ratio[0],ratio[1],1));
+    FArrayBox tmpz(bz, ncomp);
+#ifdef AMREX_USE_GPU
+    Elixir tmpz_eli;
+    if (run_on_gpu) { tmpz_eli = tmpz.elixir(); }
+#endif
+    Array4<Real> const& tmpzarr = tmpz.array();
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, bz, ncomp, i, j, k, n,
+    {
+        weno_restrict_z(i,j,k,n,tmpzarr,finearr,ratio);
+#ifdef USE_FUEGO_EOS
+        // facilitate robustness
+        Real rhomin = 1e-10;
+        Real Tmin = 1e-10;
+        tmpzarr(i,j,k,MRHO) = amrex::max(tmpzarr(i,j,k,MRHO), rhomin);
+        for (int n = 0; n < NSP; ++n) {
+            tmpzarr(i,j,k,n) = amrex::max(tmpzarr(i,j,k,n),0.0);  
+        }
+        tmpzarr(i,j,k,MT) = amrex::max(tmpzarr(i,j,k,MT), Tmin);
+#endif
+    });
+#endif
+
+#if (AMREX_SPACEDIM >= 2)
+    Box by = amrex::refine(target_crse_region, IntVect(AMREX_D_DECL(ratio[0],1,1)));
+    FArrayBox tmpy(by, ncomp);
+#ifdef AMREX_USE_GPU
+    Elixir tmpy_eli;
+    if (run_on_gpu) { tmpy_eli = tmpy.elixir(); }
+#endif
+    Array4<Real> const& tmpyarr = tmpy.array();
+#if (AMREX_SPACEDIM == 2)
+    Array4<Real const> srcarr = finearr;
+#else
+    Array4<Real const> srcarr = tmpz.const_array();
+#endif
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, ncomp, i, j, k, n,
+    {
+        weno_restrict_y(i,j,k,n,tmpyarr,srcarr,ratio);
+#ifdef USE_FUEGO_EOS
+        // facilitate robustness
+        Real rhomin = 1e-10;
+        Real Tmin = 1e-10;
+        tmpyarr(i,j,k,MRHO) = amrex::max(tmpyarr(i,j,k,MRHO), rhomin);
+        for (int n = 0; n < NSP; ++n) {
+            tmpyarr(i,j,k,n) = amrex::max(tmpyarr(i,j,k,n),0.0);  
+        }
+        tmpyarr(i,j,k,MT) = amrex::max(tmpyarr(i,j,k,MT), Tmin);
+#endif
+    });
+#endif
+
+#if (AMREX_SPACEDIM == 1)
+    Array4<Real const> srcarr = finearr;
+#else
+    srcarr = tmpy.const_array();
+#endif
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_crse_region, ncomp,
+                                           i, j, k, n,
+    {
+        weno_restrict_x(i,j,k,n,crsearr,srcarr,ratio);
+#ifdef USE_FUEGO_EOS
+        // facilitate robustness
+        Real rhomin = 1e-10;
+        Real Tmin = 1e-10;
+        crsearr(i,j,k,MRHO) = amrex::max(crsearr(i,j,k,MRHO), rhomin);
+        for (int n = 0; n < NSP; ++n) {
+            crsearr(i,j,k,n) = amrex::max(crsearr(i,j,k,n),0.0);  
+        }
+        crsearr(i,j,k,MT) = amrex::max(crsearr(i,j,k,MT), Tmin);
+#endif
     });
 }
 

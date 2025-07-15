@@ -195,6 +195,13 @@ public:
     void fillRK (int stage, int iteration, int ncycle, MF& mf, Real time,
                  BC& cbc, BC& fbc, Vector<BCRec> const& bcs);
 
+    template <typename BC>
+    void hybridfillRK (int stage, int iteration, int ncycle,
+                    MF& mf, Real ctime, Real ftime, BC& cbc, BC& fbc,
+                    Vector<BCRec> const& bcs);
+
+    void set_interpolater(InterpBase* interp_new);
+
 private:
 
     BoxArray m_fba;
@@ -216,6 +223,13 @@ private:
 
     FabArrayBase::FPinfo const& getFPinfo ();
 };
+
+template <class MF>
+void
+FillPatcher<MF>::set_interpolater (InterpBase* interp_new)
+{
+    this->m_interp = interp_new;
+}
 
 template <class MF>
 FillPatcher<MF>::FillPatcher (BoxArray const& fba, DistributionMapping const& fdm,
@@ -447,6 +461,9 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
             (detail::make_mf_crse_patch<MF>(fpc, m_ncomp));
     }
 
+    // amrex::Print() << "m_cf_crse_data_tmp->boxArray()= " 
+    //                << m_cf_crse_data_tmp->boxArray() << std::endl;
+
     auto const& u = m_cf_crse_data_tmp->arrays();
     auto const& u0 = m_cf_crse_data[0].second->const_arrays();
     auto const& k1 = m_cf_crse_data[1].second->const_arrays();
@@ -475,6 +492,7 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
         constexpr Real d2 = Real(1./3.);
         constexpr Real d3 = Real(4./3.);
         if (stage == 1) {
+            // amrex::Print() << "dtc= " << dtc << std::endl;
             amrex::ParallelFor(*m_cf_crse_data_tmp, IntVect(0), m_ncomp,
             [=] AMREX_GPU_DEVICE (int bi, int i, int j, int k, int n) noexcept
             {
@@ -487,6 +505,7 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                 }
             });
         } else if (stage == 2) {
+            // amrex::Print() << "fillRK: stage-2" << std::endl;
             amrex::ParallelFor(*m_cf_crse_data_tmp, IntVect(0), m_ncomp,
             [=] AMREX_GPU_DEVICE (int bi, int i, int j, int k, int n) noexcept
             {
@@ -500,6 +519,7 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                 }
             });
         } else if (stage == 3) {
+            // amrex::Print() << "fillRK: stage-3" << std::endl;
             amrex::ParallelFor(*m_cf_crse_data_tmp, IntVect(0), m_ncomp,
             [=] AMREX_GPU_DEVICE (int bi, int i, int j, int k, int n) noexcept
             {
@@ -593,7 +613,8 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
     }
     Gpu::streamSynchronize();
 
-    cbc(*m_cf_crse_data_tmp, 0, m_ncomp, m_cf_crse_data_tmp->nGrowVect(), time, 0);
+    cbc(*m_cf_crse_data_tmp, 0, m_ncomp, m_cf_crse_data_tmp->nGrowVect(), time, 0); // m_cf_crse_data_tmp->nGrowVect() = 0, m_gnhost=6
+
 
     if (m_cf_fine_data == nullptr) {
         m_cf_fine_data = std::make_unique<MF>(detail::make_mf_fine_patch<MF>(fpc, m_ncomp));
@@ -611,6 +632,123 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
     mf.FillBoundary(m_fgeom.periodicity());
 
     fbc(mf, 0, m_ncomp, m_nghost, time, 0);
+}
+
+template <typename MF>
+template <typename BC>
+void FillPatcher<MF>::hybridfillRK (int stage, int iteration, int ncycle,
+                              MF& mf, Real ctime, Real ftime, BC& cbc, BC& fbc,
+                              Vector<BCRec> const& bcs)
+{
+    BL_PROFILE("FillPatcher::hybridfillRK()");
+    int rk_order = m_cf_crse_data.size()-1;
+    if (rk_order != 3 && rk_order != 4) {
+        amrex::Abort("FillPatcher: unsupported RK order "+std::to_string(rk_order));
+        return;
+    }
+    AMREX_ASSERT(stage > 0 && stage <= rk_order);
+
+    auto const& fpc = getFPinfo();
+    if (m_cf_crse_data_tmp == nullptr) {
+        m_cf_crse_data_tmp = std::make_unique<MF>
+            (detail::make_mf_crse_patch<MF>(fpc, m_ncomp));
+    }
+
+    auto const& u = m_cf_crse_data_tmp->arrays();
+    auto const& u0 = m_cf_crse_data[0].second->const_arrays();
+    auto const& k1 = m_cf_crse_data[1].second->const_arrays();
+    auto const& k2 = m_cf_crse_data[2].second->const_arrays();
+    auto const& k3 = m_cf_crse_data[3].second->const_arrays();
+
+    Real dtc = m_dt_coarse;
+    Real r = Real(1) / Real(ncycle);
+    Real xsi = Real(ftime-ctime) / Real(dtc);
+
+    int const ng_space_interp = 8; // Need to be big enough
+    Box cdomain = m_cgeom.growPeriodicDomain(ng_space_interp);
+    cdomain.convert(m_cf_crse_data_tmp->ixType());
+
+    if (rk_order == 3) {
+        // coefficients for U
+        Real b1 = xsi - Real(5./6.)*xsi*xsi;
+        Real b2 = Real(1./6.)*xsi*xsi;
+        Real b3 = Real(2./3)*xsi*xsi;
+        // coefficients for Ut
+        Real c1 = Real(1.) - Real(5./3.)*xsi;
+        Real c2 = Real(1./3.)*xsi;
+        Real c3 = Real(4./3.)*xsi;
+        // coefficients for Utt
+        constexpr Real d1 = Real(-5./3.);
+        constexpr Real d2 = Real(1./3.);
+        constexpr Real d3 = Real(4./3.);
+        amrex::ParallelFor(*m_cf_crse_data_tmp, IntVect(0), m_ncomp,
+        [=] AMREX_GPU_DEVICE (int bi, int i, int j, int k, int n) noexcept
+        {
+            if (cdomain.contains(i,j,k)) {
+                Real kk1 = k1[bi](i,j,k,n);
+                Real kk2 = k2[bi](i,j,k,n);
+                Real kk3 = k3[bi](i,j,k,n);
+                Real uu  = b1*kk1 + b2*kk2 + b3*kk3;
+                u[bi](i,j,k,n) = u0[bi](i,j,k,n) + dtc*uu;
+            }
+        });
+    } else if (rk_order == 4) {
+        auto const& k4 = m_cf_crse_data[4].second->const_arrays();
+        Real xsi2 = xsi*xsi;
+        Real xsi3 = xsi2*xsi;
+        // coefficients for U
+        Real b1 = xsi - Real(1.5)*xsi2 + Real(2./3.)*xsi3;
+        Real b2 = xsi2 - Real(2./3.)*xsi3;
+        Real b3 = b2;
+        Real b4 = Real(-0.5)*xsi2 + Real(2./3.)*xsi3;
+        // coefficients for Ut
+        Real c1 = Real(1.) - Real(3.)*xsi + Real(2.)*xsi2;
+        Real c2 = Real(2.)*xsi - Real(2.)*xsi2;
+        Real c3 = c2;
+        Real c4 = -xsi + Real(2.)*xsi2;
+        // coefficients for Utt
+        Real d1 = Real(-3.) + Real(4.)*xsi;
+        Real d2 = Real( 2.) - Real(4.)*xsi;
+        Real d3 = d2;
+        Real d4 = Real(-1.) + Real(4.)*xsi;
+        // coefficients for Uttt
+        constexpr Real e1 = Real( 4.);
+        constexpr Real e2 = Real(-4.);
+        constexpr Real e3 = Real(-4.);
+        constexpr Real e4 = Real( 4.);
+        amrex::ParallelFor(*m_cf_crse_data_tmp, IntVect(0), m_ncomp,
+        [=] AMREX_GPU_DEVICE (int bi, int i, int j, int k, int n) noexcept
+        {
+            if (cdomain.contains(i,j,k)) {
+                Real kk1 = k1[bi](i,j,k,n);
+                Real kk2 = k2[bi](i,j,k,n);
+                Real kk3 = k3[bi](i,j,k,n);
+                Real kk4 = k4[bi](i,j,k,n);
+                Real uu  = b1*kk1 + b2*kk2 + b3*kk3 + b4*kk4;
+                u[bi](i,j,k,n) = u0[bi](i,j,k,n) + dtc*uu;
+            }
+        });
+    }
+    Gpu::streamSynchronize();
+
+    cbc(*m_cf_crse_data_tmp, 0, m_ncomp, m_cf_crse_data_tmp->nGrowVect(), ftime, 0);
+
+    if (m_cf_fine_data == nullptr) {
+        m_cf_fine_data = std::make_unique<MF>(detail::make_mf_fine_patch<MF>(fpc, m_ncomp));
+    }
+
+    FillPatchInterp(*m_cf_fine_data, 0, *m_cf_crse_data_tmp, 0,
+                    m_ncomp, IntVect(0), m_cgeom, m_fgeom,
+                    amrex::grow(amrex::convert(m_fgeom.Domain(),
+                                               mf.ixType()),m_nghost),
+                    m_ratio, m_interp, bcs, 0);
+
+    // xxxxx We can optimize away this ParallelCopy by making a special fpinfo.
+    mf.ParallelCopy(*m_cf_fine_data, 0, 0, m_ncomp, IntVect(0), m_nghost);
+
+    mf.FillBoundary(m_fgeom.periodicity());
+
+    fbc(mf, 0, m_ncomp, m_nghost, ftime, 0);
 }
 
 }

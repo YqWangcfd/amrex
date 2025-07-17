@@ -1677,7 +1677,7 @@ CellWENO::interp (const FArrayBox& crse,
         Real Tmin = 1e-10;
         tmpzarr(i,j,k,MRHO) = amrex::max(tmpzarr(i,j,k,MRHO), rhomin);
         for (int n = 0; n < NSP; ++n) {
-            tmpzarr(i,j,k,n) = amrex::max(tmpzarr(i,j,k,n),0.0);  
+            tmpzarr(i,j,k,n) = amrex::max(tmpzarr(i,j,k,n),Real(0.0));  
         }
         tmpzarr(i,j,k,MT) = amrex::max(tmpzarr(i,j,k,MT), Tmin);
 #endif
@@ -1708,7 +1708,7 @@ CellWENO::interp (const FArrayBox& crse,
         Real Tmin = 1e-10;
         tmpyarr(i,j,k,MRHO) = amrex::max(tmpyarr(i,j,k,MRHO), rhomin);
         for (int n = 0; n < NSP; ++n) {
-            tmpyarr(i,j,k,n) = amrex::max(tmpyarr(i,j,k,n),0.0);  
+            tmpyarr(i,j,k,n) = amrex::max(tmpyarr(i,j,k,n),Real(0.0));  
         }
         tmpyarr(i,j,k,MT) = amrex::max(tmpyarr(i,j,k,MT), Tmin);
 #endif
@@ -1730,7 +1730,7 @@ CellWENO::interp (const FArrayBox& crse,
         Real Tmin = 1e-10;
         finearr(i,j,k,MRHO) = amrex::max(finearr(i,j,k,MRHO), rhomin);
         for (int n = 0; n < NSP; ++n) {
-            finearr(i,j,k,n) = amrex::max(finearr(i,j,k,n),0.0);  
+            finearr(i,j,k,n) = amrex::max(finearr(i,j,k,n),Real(0.0));  
         }
         finearr(i,j,k,MT) = amrex::max(finearr(i,j,k,MT), Tmin);
 #endif
@@ -1783,7 +1783,7 @@ CellWENO::restrict (const FArrayBox& fine,
         Real Tmin = 1e-10;
         tmpzarr(i,j,k,MRHO) = amrex::max(tmpzarr(i,j,k,MRHO), rhomin);
         for (int n = 0; n < NSP; ++n) {
-            tmpzarr(i,j,k,n) = amrex::max(tmpzarr(i,j,k,n),0.0);  
+            tmpzarr(i,j,k,n) = amrex::max(tmpzarr(i,j,k,n),Real(0.0));  
         }
         tmpzarr(i,j,k,MT) = amrex::max(tmpzarr(i,j,k,MT), Tmin);
 #endif
@@ -1812,7 +1812,7 @@ CellWENO::restrict (const FArrayBox& fine,
         Real Tmin = 1e-10;
         tmpyarr(i,j,k,MRHO) = amrex::max(tmpyarr(i,j,k,MRHO), rhomin);
         for (int n = 0; n < NSP; ++n) {
-            tmpyarr(i,j,k,n) = amrex::max(tmpyarr(i,j,k,n),0.0);  
+            tmpyarr(i,j,k,n) = amrex::max(tmpyarr(i,j,k,n),Real(0.0));  
         }
         tmpyarr(i,j,k,MT) = amrex::max(tmpyarr(i,j,k,MT), Tmin);
 #endif
@@ -1834,7 +1834,7 @@ CellWENO::restrict (const FArrayBox& fine,
         Real Tmin = 1e-10;
         crsearr(i,j,k,MRHO) = amrex::max(crsearr(i,j,k,MRHO), rhomin);
         for (int n = 0; n < NSP; ++n) {
-            crsearr(i,j,k,n) = amrex::max(crsearr(i,j,k,n),0.0);  
+            crsearr(i,j,k,n) = amrex::max(crsearr(i,j,k,n),Real(0.0));  
         }
         crsearr(i,j,k,MT) = amrex::max(crsearr(i,j,k,MT), Tmin);
 #endif

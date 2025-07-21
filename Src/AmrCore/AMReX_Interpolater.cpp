@@ -1671,16 +1671,16 @@ CellWENO::interp (const FArrayBox& crse,
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, bz, ncomp, i, j, k, n,
     {
         central_weno_interp_z(i,j,k,n,tmpzarr,crsearr,ratio);
-#ifdef USE_FUEGO_EOS
-        // facilitate robustness
-        Real rhomin = 1e-10;
-        Real Tmin = 1e-10;
-        tmpzarr(i,j,k,MRHO) = amrex::max(tmpzarr(i,j,k,MRHO), rhomin);
-        for (int n = 0; n < NSP; ++n) {
-            tmpzarr(i,j,k,n) = amrex::max(tmpzarr(i,j,k,n),Real(0.0));  
-        }
-        tmpzarr(i,j,k,MT) = amrex::max(tmpzarr(i,j,k,MT), Tmin);
-#endif
+// #ifdef USE_FUEGO_EOS
+//         // facilitate robustness
+//         Real rhomin = 1e-10;
+//         Real Tmin = 1e-10;
+//         tmpzarr(i,j,k,MRHO) = amrex::max(tmpzarr(i,j,k,MRHO), rhomin);
+//         for (int n = 0; n < NSP; ++n) {
+//             tmpzarr(i,j,k,n) = amrex::max(tmpzarr(i,j,k,n),Real(0.0));  
+//         }
+//         tmpzarr(i,j,k,MT) = amrex::max(tmpzarr(i,j,k,MT), Tmin);
+// #endif
     });
 #endif
 
@@ -1702,16 +1702,16 @@ CellWENO::interp (const FArrayBox& crse,
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, ncomp, i, j, k, n,
     {
         central_weno_interp_y(i,j,k,n,tmpyarr,srcarr,ratio);
-#ifdef USE_FUEGO_EOS
-        // facilitate robustness
-        Real rhomin = 1e-10;
-        Real Tmin = 1e-10;
-        tmpyarr(i,j,k,MRHO) = amrex::max(tmpyarr(i,j,k,MRHO), rhomin);
-        for (int n = 0; n < NSP; ++n) {
-            tmpyarr(i,j,k,n) = amrex::max(tmpyarr(i,j,k,n),Real(0.0));  
-        }
-        tmpyarr(i,j,k,MT) = amrex::max(tmpyarr(i,j,k,MT), Tmin);
-#endif
+// #ifdef USE_FUEGO_EOS
+//         // facilitate robustness
+//         Real rhomin = 1e-10;
+//         Real Tmin = 1e-10;
+//         tmpyarr(i,j,k,MRHO) = amrex::max(tmpyarr(i,j,k,MRHO), rhomin);
+//         for (int n = 0; n < NSP; ++n) {
+//             tmpyarr(i,j,k,n) = amrex::max(tmpyarr(i,j,k,n),Real(0.0));  
+//         }
+//         tmpyarr(i,j,k,MT) = amrex::max(tmpyarr(i,j,k,MT), Tmin);
+// #endif
     });
 #endif
 
@@ -1724,16 +1724,16 @@ CellWENO::interp (const FArrayBox& crse,
                                            i, j, k, n,
     {
         central_weno_interp_x(i,j,k,n,finearr,srcarr,ratio);
-#ifdef USE_FUEGO_EOS
-        // facilitate robustness
-        Real rhomin = 1e-10;
-        Real Tmin = 1e-10;
-        finearr(i,j,k,MRHO) = amrex::max(finearr(i,j,k,MRHO), rhomin);
-        for (int n = 0; n < NSP; ++n) {
-            finearr(i,j,k,n) = amrex::max(finearr(i,j,k,n),Real(0.0));  
-        }
-        finearr(i,j,k,MT) = amrex::max(finearr(i,j,k,MT), Tmin);
-#endif
+// #ifdef USE_FUEGO_EOS
+//         // facilitate robustness
+//         Real rhomin = 1e-10;
+//         Real Tmin = 1e-10;
+//         finearr(i,j,k,MRHO) = amrex::max(finearr(i,j,k,MRHO), rhomin);
+//         for (int n = 0; n < NSP; ++n) {
+//             finearr(i,j,k,n) = amrex::max(finearr(i,j,k,n),Real(0.0));  
+//         }
+//         finearr(i,j,k,MT) = amrex::max(finearr(i,j,k,MT), Tmin);
+// #endif
    });
 }
 

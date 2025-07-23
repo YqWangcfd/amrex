@@ -46,7 +46,7 @@ CellBilinear              cell_bilinear_interp;
 CellQuadratic             quadratic_interp;
 CellQuartic               cell_quartic_interp;
 CellWENO                  cell_weno_interp;
-2DMortar                  mortar_interp_2d;
+Mortar2D                  mortar_interp_2d;
 
 Box
 NodeBilinear::CoarseBox (const Box& fine,
@@ -1845,21 +1845,21 @@ CellWENO::restrict (const FArrayBox& fine,
 
 
 Box
-2DMortar::CoarseBox (const Box& fine, const IntVect& ratio)
+Mortar2D::CoarseBox (const Box& fine, const IntVect& ratio)
 {
     Box crse = amrex::coarsen(fine,ratio);
     return crse;
 }
 
 Box
-2DMortar::CoarseBox (const Box& fine, int ratio)
+Mortar2D::CoarseBox (const Box& fine, int ratio)
 {
     Box crse = amrex::coarsen(fine,ratio);
     return crse;
 }
 
 void
-2DMortar::interp (const FArrayBox& crse,
+Mortar2D::interp (const FArrayBox& crse,
                      int              crse_comp,
                      FArrayBox&       fine,
                      int              fine_comp,
@@ -1966,7 +1966,7 @@ void
 
 
 void
-2DMortar::restrict (const FArrayBox& fine,
+Mortar2D::restrict (const FArrayBox& fine,
                     int              fine_comp,
                     FArrayBox&       crse,
                     int              crse_comp,
@@ -1980,7 +1980,7 @@ void
                     int              /* actual_state */,
                     RunOn            runon)
 {
-    BL_PROFILE("2DMortar::restrict()");
+    BL_PROFILE("Mortar2D::restrict()");
     
     // Support both ratio=2 and ratio=4
     AMREX_ASSERT(ratio == 2 || ratio == 4);
@@ -2019,7 +2019,7 @@ void
 AMREX_GPU_HOST_DEVICE
 AMREX_FORCE_INLINE
 void
-2DMortar::mortar_restrict(const int i, const int j, const int k, const int n, 
+Mortar2D::mortar_restrict(const int i, const int j, const int k, const int n, 
                 Array4<Real> const crsearr, Array4<const Real> const& finearr,
                 const IntVect&   ratio)
 {

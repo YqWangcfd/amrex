@@ -5,6 +5,7 @@
 #include <AMReX_Extension.H>
 #include <AMReX_GpuControl.H>
 #include <AMReX_InterpBase.H>
+#include <SD_Mapping_K.H>
 
 namespace amrex {
 
@@ -1122,22 +1123,20 @@ public:
 
 
 /**
-* \brief Central WENO interpolation on cell centered data.
-*
-* Central WENO interpolation on cell centered data.
+* \brief 2D Mortar Prolongation and Restriction
 */
-class 2DMortar
+class Mortar2D
     :
     public Interpolater
 {
 public:
-    constexpr int sd_order  = 5;
-    constexpr int sd_space  = 25;
+    static constexpr int sd_order  = 5;
+    static constexpr int sd_space  = 25;
     // ------------------------------------------------------------------------------------------------
     // ## 2D mortar : order refinement
     // ## fine -> coarse projection matrices
     // ----------------------------------------------------------------------------------------------
-    Real Px = [5][10] = {
+    Real Px[5][10] = {
         { 0.603383141696693,   0.771704926696189,  -0.856836867851174,   2.469865488345720, -12.313391031781396,  11.580862183718867, -1.281980197420377,   0.073293286821232,  -0.107075962763792,   0.060175032538039},
         {-0.063710848769843,   0.338463378171787,   0.783859428088837,  -0.390843753679491,   2.266194771743281,  -2.026752144784240,  0.044770809223417,   0.018834799716061,   0.065614679953372,  -0.036431119663181},
         { 0.038420719563153,  -0.088750579099409,  -0.006983256154527,   0.496287373858870,   0.061025741831907,   0.061025741831921,  0.496287373858867,  -0.006983256154527,  -0.088750579099409,   0.038420719563153},
@@ -1145,7 +1144,7 @@ public:
         { 0.060175032538039,  -0.107075962763791,   0.073293286821232,  -1.281980197420372,  11.580862183718832, -12.313391031781363,  2.469865488345713,  -0.856836867851173,   0.771704926696187,   0.603383141696693}
     };
 
-    Real Py = [10][5] = {
+    Real Py[10][5] = {
         { 0.603383141696693,  -0.063710848769843,   0.038420719563153,  -0.036431119663181,   0.060175032538039},
         { 0.771704926696189,   0.338463378171787,  -0.088750579099409,   0.065614679953372,  -0.107075962763791},
         {-0.856836867851174,   0.783859428088837,  -0.006983256154527,   0.018834799716061,   0.073293286821232},
@@ -1233,6 +1232,12 @@ public:
                  int              actual_comp,
                  int              actual_state,
                  RunOn            runon) override;
+
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    void mortar_restrict(const int i, const int j, const int k, const int n, 
+                Array4<Real> const crsearr, Array4<const Real> const& finearr,
+                const IntVect&   ratio);
 };
 
 //! CONSTRUCT A GLOBAL OBJECT OF EACH VERSION.
@@ -1249,7 +1254,7 @@ extern AMREX_EXPORT CellConservativeQuartic   quartic_interp;
 extern AMREX_EXPORT CellQuadratic             quadratic_interp;
 extern AMREX_EXPORT CellQuartic               cell_quartic_interp;
 extern AMREX_EXPORT CellWENO                  cell_weno_interp;
-extern AMREX_EXPORT 2DMortar                  mortar_interp_2d;
+extern AMREX_EXPORT Mortar2D                  mortar_interp_2d;
 
 }
 

@@ -1120,6 +1120,121 @@ public:
                  RunOn            runon) override;
 };
 
+
+/**
+* \brief Central WENO interpolation on cell centered data.
+*
+* Central WENO interpolation on cell centered data.
+*/
+class 2DMortar
+    :
+    public Interpolater
+{
+public:
+    constexpr int sd_order  = 5;
+    constexpr int sd_space  = 25;
+    // ------------------------------------------------------------------------------------------------
+    // ## 2D mortar : order refinement
+    // ## fine -> coarse projection matrices
+    // ----------------------------------------------------------------------------------------------
+    Real Px = [5][10] = {
+        { 0.603383141696693,   0.771704926696189,  -0.856836867851174,   2.469865488345720, -12.313391031781396,  11.580862183718867, -1.281980197420377,   0.073293286821232,  -0.107075962763792,   0.060175032538039},
+        {-0.063710848769843,   0.338463378171787,   0.783859428088837,  -0.390843753679491,   2.266194771743281,  -2.026752144784240,  0.044770809223417,   0.018834799716061,   0.065614679953372,  -0.036431119663181},
+        { 0.038420719563153,  -0.088750579099409,  -0.006983256154527,   0.496287373858870,   0.061025741831907,   0.061025741831921,  0.496287373858867,  -0.006983256154527,  -0.088750579099409,   0.038420719563153},
+        {-0.036431119663181,   0.065614679953372,   0.018834799716061,   0.044770809223414,  -2.026752144784220,   2.266194771743262, -0.390843753679487,   0.783859428088836,   0.338463378171787,  -0.063710848769843},
+        { 0.060175032538039,  -0.107075962763791,   0.073293286821232,  -1.281980197420372,  11.580862183718832, -12.313391031781363,  2.469865488345713,  -0.856836867851173,   0.771704926696187,   0.603383141696693}
+    };
+
+    Real Py = [10][5] = {
+        { 0.603383141696693,  -0.063710848769843,   0.038420719563153,  -0.036431119663181,   0.060175032538039},
+        { 0.771704926696189,   0.338463378171787,  -0.088750579099409,   0.065614679953372,  -0.107075962763791},
+        {-0.856836867851174,   0.783859428088837,  -0.006983256154527,   0.018834799716061,   0.073293286821232},
+        { 2.469865488345720,  -0.390843753679491,   0.496287373858870,   0.044770809223414,  -1.281980197420372},
+        {-12.313391031781396,   2.266194771743281,   0.061025741831907,  -2.026752144784220,  11.580862183718832},
+        {11.580862183718867,  -2.026752144784240,   0.061025741831921,   2.266194771743262, -12.313391031781363},
+        {-1.281980197420377,   0.044770809223417,   0.496287373858867,  -0.390843753679487,   2.469865488345713},
+        { 0.073293286821232,   0.018834799716061,  -0.006983256154527,   0.783859428088836,  -0.856836867851173},
+        {-0.107075962763792,   0.065614679953372,  -0.088750579099409,   0.338463378171787,   0.771704926696187},
+        { 0.060175032538039,  -0.036431119663181,   0.038420719563153,  -0.063710848769843,   0.603383141696693}
+    }; 
+
+    /**
+    * \brief Returns coarsened box given fine box and refinement ratio.
+    *
+    * \param fine
+    * \param ratio
+    */
+    Box CoarseBox (const Box& fine, int ratio) override;
+
+    /**
+    * \brief Returns coarsened box given fine box and refinement ratio.
+    *
+    * \param fine
+    * \param ratio
+    */
+    Box CoarseBox (const Box& fine, const IntVect& ratio) override;
+
+    /**
+    * \brief Coarse to fine interpolation in space.
+    *
+    * \param crse
+    * \param crse_comp
+    * \param fine
+    * \param fine_comp
+    * \param ncomp
+    * \param fine_region
+    * \param ratio
+    * \param crse_geom
+    * \param fine_geom
+    * \param bcr
+    * \param actual_comp
+    * \param actual_state
+    */
+    void interp (const FArrayBox& crse,
+                 int              crse_comp,
+                 FArrayBox&       fine,
+                 int              fine_comp,
+                 int              ncomp,
+                 const Box&       fine_region,
+                 const IntVect&   ratio,
+                 const Geometry&  crse_geom,
+                 const Geometry&  fine_geom,
+                 Vector<BCRec> const& bcr,
+                 int              actual_comp,
+                 int              actual_state,
+                 RunOn            runon) override;
+
+    /**
+    * \brief Fine to coarse interpolation in space.
+    *
+    * \param fine
+    * \param fine_comp
+    * \param crse
+    * \param crse_comp
+    * \param ncomp
+    * \param crse_region
+    * \param ratio
+    * \param fine_geom
+    * \param crse_geom
+    * \param bcr
+    * \param actual_comp
+    * \param actual_state
+    */
+    void restrict (const FArrayBox& fine,
+                 int              fine_comp,
+                 FArrayBox&       crse,
+                 int              crse_comp,
+                 int              ncomp,
+                 const Box&       crse_region,
+                 const IntVect&   ratio,
+                 const Geometry&  fine_geom,
+                 const Geometry&  crse_geom,
+                 Vector<BCRec> const& bcr,
+                 int              actual_comp,
+                 int              actual_state,
+                 RunOn            runon) override;
+};
+
 //! CONSTRUCT A GLOBAL OBJECT OF EACH VERSION.
 extern AMREX_EXPORT PCInterp                  pc_interp;
 extern AMREX_EXPORT NodeBilinear              node_bilinear_interp;
@@ -1134,6 +1249,7 @@ extern AMREX_EXPORT CellConservativeQuartic   quartic_interp;
 extern AMREX_EXPORT CellQuadratic             quadratic_interp;
 extern AMREX_EXPORT CellQuartic               cell_quartic_interp;
 extern AMREX_EXPORT CellWENO                  cell_weno_interp;
+extern AMREX_EXPORT 2DMortar                  mortar_interp_2d;
 
 }
 

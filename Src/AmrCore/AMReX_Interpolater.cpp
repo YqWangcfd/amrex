@@ -1862,21 +1862,21 @@ Mortar2D::CoarseBox (const Box& fine, int ratio)
 
 void
 Mortar2D::interp (const FArrayBox& crse,
-                     int              crse_comp,
-                     FArrayBox&       fine,
-                     int              fine_comp,
-                     int              ncomp,
-                     const Box&       fine_region,
-                     const IntVect&   ratio,
-                     const Geometry&  /*crse_geom*/,
-                     const Geometry&  /*fine_geom*/,
-                     Vector<BCRec> const&  /*bcr*/,
-                     int              /* actual_comp */,
-                     int              /* actual_state */,
-                     RunOn            runon)
+                    int              crse_comp,
+                    FArrayBox&       fine,
+                    int              fine_comp,
+                    int              ncomp,
+                    const Box&       fine_region,
+                    const IntVect&   ratio,
+                    const Geometry&  /*crse_geom*/,
+                    const Geometry&  /*fine_geom*/,
+                    Vector<BCRec> const&  /*bcr*/,
+                    int              /* actual_comp */,
+                    int              /* actual_state */,
+                    RunOn            runon)
 {
-    BL_PROFILE("CellWENO::interp()");
-
+    BL_PROFILE("Mortar2D::interp()");
+    
     // Support both ratio=2 and ratio=4
     AMREX_ASSERT(ratio == 2 || ratio == 4);
 
@@ -1888,82 +1888,121 @@ Mortar2D::interp (const FArrayBox& crse,
     Array4<Real const> const& crsearr = crse.const_array(crse_comp);
     Array4<Real>       const& finearr = fine.array(fine_comp);
 
-#if (AMREX_SPACEDIM == 3)
-    Box bz = amrex::coarsen(target_fine_region, IntVect(ratio[0],ratio[1],1));
-    bz.grow(IntVect(3,3,0));
-    FArrayBox tmpz(bz, ncomp);
-#ifdef AMREX_USE_GPU
-    Elixir tmpz_eli;
-    if (run_on_gpu) { tmpz_eli = tmpz.elixir(); }
-#endif
-    Array4<Real> const& tmpzarr = tmpz.array();
-    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, bz, ncomp, i, j, k, n,
-    {
-        central_weno_interp_z(i,j,k,n,tmpzarr,crsearr,ratio);
-#ifdef USE_FUEGO_EOS
-        // facilitate robustness
-        Real rhomin = 1e-10;
-        Real Tmin = 1e-10;
-        tmpzarr(i,j,k,MRHO) = amrex::max(tmpzarr(i,j,k,MRHO), rhomin);
-        for (int n = 0; n < NSP; ++n) {
-            tmpzarr(i,j,k,n) = amrex::max(tmpzarr(i,j,k,n),0.0);  
-        }
-        tmpzarr(i,j,k,MT) = amrex::max(tmpzarr(i,j,k,MT), Tmin);
-#endif
-    });
-#endif
 
-#if (AMREX_SPACEDIM >= 2)
-    Box by = amrex::coarsen(target_fine_region, IntVect(AMREX_D_DECL(ratio[0],1,1)));
-    by.grow(IntVect(AMREX_D_DECL(3,0,0)));
-    FArrayBox tmpy(by, ncomp);
-#ifdef AMREX_USE_GPU
-    Elixir tmpy_eli;
-    if (run_on_gpu) { tmpy_eli = tmpy.elixir(); }
-#endif
-    Array4<Real> const& tmpyarr = tmpy.array();
 #if (AMREX_SPACEDIM == 2)
-    Array4<Real const> srcarr = crsearr;
-#else
-    Array4<Real const> srcarr = tmpz.const_array();
-#endif
-
-    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, ncomp, i, j, k, n,
+    auto const& destarr = finearr;
+    auto const& srcarr  = crsearr;
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_fine_region, ncomp/(sd_order*sd_order), i, j, k, n,
     {
-        central_weno_interp_y(i,j,k,n,tmpyarr,srcarr,ratio);
-#ifdef USE_FUEGO_EOS
-        // facilitate robustness
-        Real rhomin = 1e-10;
-        Real Tmin = 1e-10;
-        tmpyarr(i,j,k,MRHO) = amrex::max(tmpyarr(i,j,k,MRHO), rhomin);
-        for (int n = 0; n < NSP; ++n) {
-            tmpyarr(i,j,k,n) = amrex::max(tmpyarr(i,j,k,n),0.0);  
-        }
-        tmpyarr(i,j,k,MT) = amrex::max(tmpyarr(i,j,k,MT), Tmin);
-#endif
+        mortar_interp(i,j,k,n,destarr,srcarr,ratio);
     });
 #endif
+}
 
-#if (AMREX_SPACEDIM == 1)
-    Array4<Real const> srcarr = crsearr;
-#else
-    srcarr = tmpy.const_array();
-#endif
-    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_fine_region, ncomp,
-                                           i, j, k, n,
+
+AMREX_GPU_HOST_DEVICE
+AMREX_FORCE_INLINE
+void
+Mortar2D::mortar_interp(const int i, const int j, const int k, const int n, 
+                Array4<Real> const& finearr, Array4<const Real> const& crsearr,
+                const IntVect&   ratio)
+{
+    if (Mortar2D::type == Type::OrderRef)
     {
-        central_weno_interp_x(i,j,k,n,finearr,srcarr,ratio);
-#ifdef USE_FUEGO_EOS
-        // facilitate robustness
-        Real rhomin = 1e-10;
-        Real Tmin = 1e-10;
-        finearr(i,j,k,MRHO) = amrex::max(finearr(i,j,k,MRHO), rhomin);
-        for (int n = 0; n < NSP; ++n) {
-            finearr(i,j,k,n) = amrex::max(finearr(i,j,k,n),0.0);  
+        define a smaller and a larger 2D matrix 
+        Real uc[sd_order][sd_order];
+        Real uf[sd_order*2][sd_order*2]; // row <i> of u corresponds to physical axis <x>
+
+
+        int ic = amrex::coarsen(i, ratio[0]);
+        int jc = amrex::coarsen(j, ratio[1]);
+        int kc = (AMREX_SPACEDIM>2)? amrex::coarsen(k, ratio[2]) : 0;
+
+        int nc;
+        
+        for (int s = 0; s < sd_order; ++s) {
+            for (int m = 0; m < sd_order; ++m) {
+                // 5×5 coarse state
+                nc = box2point(s, m, 0, n);
+                uc[s][m] = crsearr(ic,jc,kc,nc);
+            }
         }
-        finearr(i,j,k,MT) = amrex::max(finearr(i,j,k,MT), Tmin);
-#endif
-   });
+
+        Real tmp[sd_order][sd_oder*2];
+        for (int s = 0; s < sd_order; ++s) {
+            for (int m = 0; m < sd_order*2; ++m) {
+                tmp[s][m] = Real(0);
+                for (int q = 0; q < sd_order; ++q) {
+                    tmp[s][m] += uc[s][q] * Py_prol[q][m];
+                }
+            }
+        }
+
+        for (int s = 0; s < sd_order*2; ++s) {
+            for (int m = 0; m < sd_order*2; ++m) {
+                uf[s][m] = Real(0);
+                for (int q = 0; q < sd_order; ++q) {
+                    uf[s][m] += Px_prol[s][q] * tmp[q][m];
+                }
+            }
+        }
+
+        int ioff = i-2*ic, joff = j-2*jc;
+        for (int s = 0; s < sd_order; ++s) {
+            for (int m = 0; m < sd_order; ++m) {
+                nc = box2point(s, m, 0, n);
+                finearr(i,j,k,nc) = uf[ioff*sd_order+s][joff*sd_order+m];
+            }
+        }
+        // amrex::Abort("Please pass Type::ScaleRef onto the mapper instead of using the Type::OrderRef!");
+        return;
+    } else if (Mortar2D::type == Type::ScaleRef)
+    {
+        // define four 2D mass matrices with equivalent sizes
+        Real uc[sd_order][sd_order];
+
+        int ic = amrex::coarsen(i, ratio[0]);
+        int jc = amrex::coarsen(j, ratio[1]);
+        int kc = (AMREX_SPACEDIM>2)? amrex::coarsen(k, ratio[2]) : 0;
+
+
+        int nc;
+        for (int s = 0; s < sd_order; ++s) {
+            for (int m = 0; m < sd_order; ++m) {
+                // 5*5 crse state
+                nc = box2point(s, m, 0, n);
+                uc[s][m] = crsearr(ic,jc,kc,nc);
+            }
+        }
+
+        Real tmp[sd_order][sd_order];
+    
+        int joff = j-2*jc;
+        // 5*5 temporary state
+        for (int s = 0; s < sd_order; ++s) {
+            for (int m = 0; m < sd_order; ++m) {
+                tmp[s][m] = Real(0);
+                for (int q = 0; q < sd_order; ++q) {
+                    tmp[s][m] += uc[s][q] * (Real(2.0) * Py2D[joff][q][m]);
+                }
+            }
+        }
+
+        int ioff = i-2*ic;
+        for (int s = 0; s < sd_order; ++s) {
+            for (int m = 0; m < sd_order; ++m) {
+                finearr(i,j,k,nc) = Real(0);
+                for (int q = 0; q < sd_order; ++q) {
+                    nc = box2point(s, m, 0, n);
+                    finearr(i,j,k,nc) += (Real(2.0) * Px2D[ioff][s][q]) * tmp[q][m];
+                }
+            }
+        }
+        return;
+
+    } else {
+        amrex::Abort("Unknown strategy for c->f projection");
+    }
 }
 
 
@@ -1995,18 +2034,6 @@ Mortar2D::restrict (const FArrayBox& fine,
     Array4<Real const> const& finearr = fine.const_array(fine_comp);
     Array4<Real>       const& crsearr = crse.array(crse_comp);
 
-// #if (AMREX_SPACEDIM == 3)
-//     Box bz = amrex::refine(target_crse_region, IntVect(ratio[0],ratio[1],1));
-//     FArrayBox tmpz(bz, ncomp);
-// #ifdef AMREX_USE_GPU
-//     Elixir tmpz_eli;
-//     if (run_on_gpu) { tmpz_eli = tmpz.elixir(); }
-// #endif
-//     Array4<Real> const& tmpzarr = tmpz.array();
-//     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, bz, ncomp, i, j, k, n,
-//     {
-//         weno_restrict_z(i,j,k,n,tmpzarr,finearr,ratio);
-// #endif
 
 #if (AMREX_SPACEDIM == 2)
     auto const& destarr = crsearr;

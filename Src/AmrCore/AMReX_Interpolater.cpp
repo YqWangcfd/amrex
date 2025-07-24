@@ -46,7 +46,9 @@ CellBilinear              cell_bilinear_interp;
 CellQuadratic             quadratic_interp;
 CellQuartic               cell_quartic_interp;
 CellWENO                  cell_weno_interp;
-Mortar2D                  mortar_interp_2d;
+Mortar2D                  mortar_interp_orderRef;
+Mortar2D                  mortar_interp_scaleRef(Mortar2D::Type::ScaleRef);
+
 
 Box
 NodeBilinear::CoarseBox (const Box& fine,
@@ -2023,46 +2025,110 @@ Mortar2D::mortar_restrict(const int i, const int j, const int k, const int n,
                 Array4<Real> const crsearr, Array4<const Real> const& finearr,
                 const IntVect&   ratio)
 {
-    Real uc[sd_order][sd_order];
-    Real uf[sd_order*2][sd_order*2];
+    if (Mortar2D::type == Type::OrderRef)
+    {
+        // define a smaller and a larger 2D matrix 
+        Real uc[sd_order][sd_order];
+        Real uf[sd_order*2][sd_order*2]; // row <i> of u corresponds to physical axis <x>
 
-    int ii = i*ratio[0];
-    int jj = j*ratio[1];
-    int kk = (AMREX_SPACEDIM>2)? k*ratio[2] : 0;
 
-    int nc;
-    for (int s = 0; s < sd_order; ++s) {
-        for (int m = 0; m < sd_order; ++m) {
-            // 10×10 fine state
-            for (int ioff = 0; ioff < ratio[0]; ++ioff) {
-                for (int joff = 0; joff < ratio[1]; ++joff) {
-                    nc = box2point(s, m, 0, n);
-                    uf[joff*sd_order+m][ioff*sd_order+s] = finearr(ii+ioff,jj+joff,kk,nc);
+        int ii = i*ratio[0];
+        int jj = j*ratio[1];
+        int kk = (AMREX_SPACEDIM>2)? k*ratio[2] : 0;
+
+        int nc;
+        for (int s = 0; s < sd_order; ++s) {
+            for (int m = 0; m < sd_order; ++m) {
+                // 10×10 fine state
+                for (int ioff = 0; ioff < ratio[0]; ++ioff) {
+                    for (int joff = 0; joff < ratio[1]; ++joff) {
+                        nc = box2point(s, m, 0, n);
+                        uf[ioff*sd_order+s][joff*sd_order+m] = finearr(ii+ioff,jj+joff,kk,nc);
+                    }
                 }
             }
         }
-    }
 
-    Real tmp[sd_order*2][sd_order];
-    for (int s = 0; s < sd_order*2; ++s) {
-        for (int m = 0; m < sd_order; ++m) {
-            tmp[s][m] = 0.0;
-            for (int q = 0; q < sd_order*2; ++q) {
-                tmp[s][m] += uf[s][q] * Py[q][m];
+        Real tmp[sd_order*2][sd_order];
+        for (int s = 0; s < sd_order*2; ++s) {
+            for (int m = 0; m < sd_order; ++m) {
+                tmp[s][m] = 0.0;
+                for (int q = 0; q < sd_order*2; ++q) {
+                    tmp[s][m] += uf[s][q] * Py[q][m];
+                }
             }
         }
-    }
 
-    for (int m = 0; m < sd_order; ++m) {
         for (int s = 0; s < sd_order; ++s) {
-            uc[m][s] = Real(0);
-            for (int q = 0; q < sd_order*2; ++q) {
-                uc[m][s] += Px[m][q]*tmp[q][s];
+            for (int m = 0; m < sd_order; ++m) {
+                uc[s][m] = Real(0);
+                for (int q = 0; q < sd_order*2; ++q) {
+                    uc[s][m] += Px[s][q]*tmp[q][m];
+                }
+                // 5×5 coarse state
+                nc = box2point(s, m, 0, n);
+                crsearr(i,j,k,nc) = uc[s][m];
             }
-            // 5×5 coarse state
-            nc = box2point(s, m, 0, n);
-            crsearr(i,j,k,nc) = uc[m][s];
         }
+        return;
+
+    } else if (Mortar2D::type == Type::ScaleRef)
+    {
+        // define four 2D mass matrices with equivalent sizes
+        Real uc[sd_order][sd_order];
+        Real uf[2][2][sd_order][sd_order]; // row <i> of u corresponds to physical axis <x>
+
+
+        int ii = i*ratio[0];
+        int jj = j*ratio[1];
+        int kk = (AMREX_SPACEDIM>2)? k*ratio[2] : 0;
+
+        int nc;
+        for (int s = 0; s < sd_order; ++s) {
+            for (int m = 0; m < sd_order; ++m) {
+                // 2D 5*5 fine state
+                for (int ioff = 0; ioff < ratio[0]; ++ioff) {
+                    for (int joff = 0; joff < ratio[1]; ++joff) {
+                        nc = box2point(s, m, 0, n);
+                        uf[ioff][joff][s][m] = finearr(ii+ioff,jj+joff,kk,nc);
+                    }
+                }
+            }
+        }
+
+        Real tmp[2][2][sd_order][sd_order];
+        // 5*5 fine state
+        for (int ioff = 0; ioff < ratio[0]; ++ioff) {
+            for (int joff = 0; joff < ratio[1]; ++joff) {
+                for (int s = 0; s < sd_order; ++s) {
+                    for (int m = 0; m < sd_order; ++m) {
+                        tmp[ioff][joff][s][m] = Real(0);
+                        for (int q = 0; q < sd_order; ++q) {
+                            tmp[ioff][joff][s][m] += uf[ioff][joff][s][q] * Py2D[joff][q][m];
+                        }
+                    }
+                }
+            }
+        }
+
+        for (int s = 0; s < sd_order; ++s) {
+            for (int m = 0; m < sd_order; ++m) {
+                uc[s][m] = Real(0);
+                for (int ioff = 0; ioff < ratio[0]; ++ioff) {
+                    for (int joff = 0; joff < ratio[1]; ++joff) {
+                        for (int q = 0; q < sd_order; ++q) {
+                            uc[s][m] += Px2D[ioff][s][q] * tmp[ioff][joff][q][m];
+                        }
+                    }
+                }
+                nc = box2point(s, m, 0, n);
+                crsearr(i,j,k,nc) = uc[s][m];
+            }
+        }
+        return;
+
+    } else {
+        amrex::Abort("Unknown strategy for f->c projection");
     }
 }
 

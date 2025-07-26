@@ -1882,19 +1882,18 @@ Mortar2D::interp (const FArrayBox& crse,
 
     Box target_fine_region = fine_region & fine.box();
 
+    amrex::Print() << "target_fine_region=" << target_fine_region   << std::endl;
+
     bool run_on_gpu = (runon == RunOn::Gpu && Gpu::inLaunchRegion());
     amrex::ignore_unused(run_on_gpu);
 
     Array4<Real const> const& crsearr = crse.const_array(crse_comp);
     Array4<Real>       const& finearr = fine.array(fine_comp);
 
-
 #if (AMREX_SPACEDIM == 2)
-    auto const& destarr = finearr;
-    auto const& srcarr  = crsearr;
-    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_fine_region, ncomp/(sd_order*sd_order), i, j, k, n,
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_fine_region, ncomp/sd_space, i, j, k, n,
     {
-        mortar_interp(i,j,k,n,destarr,srcarr,ratio);
+        mortar_interp(i,j,k,n,finearr,crsearr,ratio);
     });
 #endif
 }
@@ -1909,7 +1908,7 @@ Mortar2D::mortar_interp(const int i, const int j, const int k, const int n,
 {
     if (Mortar2D::type == Type::OrderRef)
     {
-        define a smaller and a larger 2D matrix 
+        // define a smaller and a larger 2D matrix 
         Real uc[sd_order][sd_order];
         Real uf[sd_order*2][sd_order*2]; // row <i> of u corresponds to physical axis <x>
 
@@ -1919,7 +1918,6 @@ Mortar2D::mortar_interp(const int i, const int j, const int k, const int n,
         int kc = (AMREX_SPACEDIM>2)? amrex::coarsen(k, ratio[2]) : 0;
 
         int nc;
-        
         for (int s = 0; s < sd_order; ++s) {
             for (int m = 0; m < sd_order; ++m) {
                 // 5×5 coarse state
@@ -1928,10 +1926,10 @@ Mortar2D::mortar_interp(const int i, const int j, const int k, const int n,
             }
         }
 
-        Real tmp[sd_order][sd_oder*2];
+        Real tmp[sd_order][sd_order*2];
         for (int s = 0; s < sd_order; ++s) {
             for (int m = 0; m < sd_order*2; ++m) {
-                tmp[s][m] = Real(0);
+                tmp[s][m] = Real(0.0);
                 for (int q = 0; q < sd_order; ++q) {
                     tmp[s][m] += uc[s][q] * Py_prol[q][m];
                 }
@@ -1940,7 +1938,7 @@ Mortar2D::mortar_interp(const int i, const int j, const int k, const int n,
 
         for (int s = 0; s < sd_order*2; ++s) {
             for (int m = 0; m < sd_order*2; ++m) {
-                uf[s][m] = Real(0);
+                uf[s][m] = Real(0.0);
                 for (int q = 0; q < sd_order; ++q) {
                     uf[s][m] += Px_prol[s][q] * tmp[q][m];
                 }
@@ -1954,6 +1952,7 @@ Mortar2D::mortar_interp(const int i, const int j, const int k, const int n,
                 finearr(i,j,k,nc) = uf[ioff*sd_order+s][joff*sd_order+m];
             }
         }
+        
         // amrex::Abort("Please pass Type::ScaleRef onto the mapper instead of using the Type::OrderRef!");
         return;
     } else if (Mortar2D::type == Type::ScaleRef)
@@ -1965,6 +1964,7 @@ Mortar2D::mortar_interp(const int i, const int j, const int k, const int n,
         int jc = amrex::coarsen(j, ratio[1]);
         int kc = (AMREX_SPACEDIM>2)? amrex::coarsen(k, ratio[2]) : 0;
 
+        // amrex::Print() << "ic=" << ic << " jc=" << jc << std::endl;
 
         int nc;
         for (int s = 0; s < sd_order; ++s) {

@@ -278,8 +278,8 @@ FillPatcher<MF>::fill (MF& mf, IntVect const& nghost, Real time,
     AMREX_ALWAYS_ASSERT(m_fba == fmf[0]->boxArray() &&
                         m_fdm == fmf[0]->DistributionMap());
 
-    fillCoarseFineBoundary(mf, nghost, time, cmf, ct, scomp, dcomp, ncomp,
-                           cbc, cbccomp, bcs, bcscomp, pre_interp, post_interp);
+    // fillCoarseFineBoundary(mf, nghost, time, cmf, ct, scomp, dcomp, ncomp,
+    //                        cbc, cbccomp, bcs, bcscomp, pre_interp, post_interp);
 
     FillPatchSingleLevel(mf, nghost, time, fmf, ft, scomp, dcomp, ncomp,
                          m_fgeom, fbc, fbccomp);

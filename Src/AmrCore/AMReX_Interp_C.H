@@ -670,142 +670,297 @@ void cell_quartic_restrict_z (int i, int j, int k, int n, Array4<Real> const& cr
 
 // WENO coefficients stored in constant memory for optimal GPU performance
 namespace {
+// different stencil points
+// #ifdef AMREX_USE_GPU
+//     // Linear weights for different ratio and sub-cell positions
+//     // [ratio_idx][subcell_idx][stencil_idx]
+//     AMREX_GPU_CONSTANT Real weno_linear_weights[2][4][4] = {
+//         // ratio = 2
+//         {
+//             {3.0/256.0, 99.0/256.0, 693.0/1280.0, 77.0/1280.0},  // subcell 0 (r=2, s=-1)
+//             {3.0/256.0, 99.0/256.0, 693.0/1280.0, 77.0/1280.0},  // subcell 1 (r=2, s=1)
+//             {0.0, 0.0, 0.0, 0.0},  // unused
+//             {0.0, 0.0, 0.0, 0.0}   // unused
+//         },
+//         // ratio = 4
+//         {
+//             {209.0/10240.0, 1462.0/3411.0, 271.0/535.0, 91.0/2480.0},  // subcell 0 (r=4, ii)
+//             {5.0/1004.0, 111.0/323.0, 1173.0/2048.0, 68.0/865.0},      // subcell 1 (r=4, ii+1/2)
+//             {5.0/1004.0, 111.0/323.0, 1173.0/2048.0, 68.0/865.0},      // subcell 2 (r=4, ii+1)
+//             {209.0/10240.0, 1462.0/3411.0, 271.0/535.0, 91.0/2480.0}   // subcell 3 (r=4, ii+3/2)
+//         }
+//     };
+
+//     // Smoothness indicator coefficients [coeff_idx][term_idx]
+//     // beta = c0*v0*v2 + c1*v0*v1 + c2*v1*v2 + c3*v0^2 + c4*v1^2 + c5*v2^2
+//     AMREX_GPU_CONSTANT Real weno_beta_coeffs[4][6] = {
+//         {29.0/3.0, -49.0/3.0, -73.0/3.0, 10.0/3.0, 61.0/3.0, 22.0/3.0},  // beta0
+//         {11.0/3.0, -19.0/3.0, -31.0/3.0,  4.0/3.0, 25.0/3.0, 10.0/3.0},  // beta1
+//         { 5.0/3.0, -13.0/3.0, -13.0/3.0,  4.0/3.0, 13.0/3.0,  4.0/3.0},  // beta2
+//         {11.0/3.0, -31.0/3.0, -19.0/3.0, 10.0/3.0, 25.0/3.0,  4.0/3.0}   // beta3
+//     };
+
+//     // Stencil coefficients for different ratio and sub-cell positions
+//     // [ratio_idx][subcell_idx][stencil_idx][coeff_idx]
+//     AMREX_GPU_CONSTANT Real weno_stencil_coeffs[2][4][4][3] = {
+//         // ratio = 2
+//         {
+//             // subcell 0 (r=2, s=-1)
+//             {{21.0/32.0, -66.0/32.0, 77.0/32.0}, {-3.0/32.0, 14.0/32.0, 21.0/32.0}, 
+//              {5.0/32.0, 30.0/32.0, -3.0/32.0}, {45.0/32.0, -18.0/32.0, 5.0/32.0}},
+//             // subcell 1 (r=2, s=1) - same as subcell 0 for symmetric case
+//             {{21.0/32.0, -66.0/32.0, 77.0/32.0}, {-3.0/32.0, 14.0/32.0, 21.0/32.0}, 
+//              {5.0/32.0, 30.0/32.0, -3.0/32.0}, {45.0/32.0, -18.0/32.0, 5.0/32.0}},
+//             // unused
+//             {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}},
+//             {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}}
+//         },
+//         // ratio = 4
+//         {
+//             // subcell 0 (r=4, ii)
+//             {{65.0/128.0, -210.0/128.0, 273.0/128.0}, {-15.0/128.0, 78.0/128.0, 65.0/128.0}, 
+//              {33.0/128.0, 110.0/128.0, -15.0/128.0}, {209.0/128.0, -114.0/128.0, 33.0/128.0}},
+//             // subcell 1 (r=4, ii+1/2)
+//             {{105.0/128.0, -322.0/128.0, 345.0/128.0}, {-7.0/128.0, 30.0/128.0, 105.0/128.0}, 
+//              {9.0/128.0, 126.0/128.0, -7.0/128.0}, {153.0/128.0, -34.0/128.0, 9.0/128.0}},
+//             // subcell 2 (r=4, ii+1) - mirror of subcell 1
+//             {{105.0/128.0, -322.0/128.0, 345.0/128.0}, {-7.0/128.0, 30.0/128.0, 105.0/128.0}, 
+//              {9.0/128.0, 126.0/128.0, -7.0/128.0}, {153.0/128.0, -34.0/128.0, 9.0/128.0}},
+//             // subcell 3 (r=4, ii+3/2) - mirror of subcell 0
+//             {{65.0/128.0, -210.0/128.0, 273.0/128.0}, {-15.0/128.0, 78.0/128.0, 65.0/128.0}, 
+//              {33.0/128.0, 110.0/128.0, -15.0/128.0}, {209.0/128.0, -114.0/128.0, 33.0/128.0}}
+//         }
+//     };
+// #else
+//     // Linear weights for different ratio and sub-cell positions
+//     // [ratio_idx][subcell_idx][stencil_idx]
+//     Real weno_linear_weights[2][4][4] = {
+//         // ratio = 2
+//         {
+//             {3.0/256.0, 99.0/256.0, 693.0/1280.0, 77.0/1280.0},  // subcell 0 (r=2, s=-1)
+//             {3.0/256.0, 99.0/256.0, 693.0/1280.0, 77.0/1280.0},  // subcell 1 (r=2, s=1)
+//             {0.0, 0.0, 0.0, 0.0},  // unused
+//             {0.0, 0.0, 0.0, 0.0}   // unused
+//         },
+//         // ratio = 4
+//         {
+//             {209.0/10240.0, 1462.0/3411.0, 271.0/535.0, 91.0/2480.0},  // subcell 0 (r=4, ii)
+//             {5.0/1004.0, 111.0/323.0, 1173.0/2048.0, 68.0/865.0},      // subcell 1 (r=4, ii+1/2)
+//             {5.0/1004.0, 111.0/323.0, 1173.0/2048.0, 68.0/865.0},      // subcell 2 (r=4, ii+1)
+//             {209.0/10240.0, 1462.0/3411.0, 271.0/535.0, 91.0/2480.0}   // subcell 3 (r=4, ii+3/2)
+//         }
+//     };
+
+//     // Smoothness indicator coefficients [coeff_idx][term_idx]
+//     // beta = c0*v0*v2 + c1*v0*v1 + c2*v1*v2 + c3*v0^2 + c4*v1^2 + c5*v2^2
+//     Real weno_beta_coeffs[4][6] = {
+//         {29.0/3.0, -49.0/3.0, -73.0/3.0, 10.0/3.0, 61.0/3.0, 22.0/3.0},  // beta0
+//         {11.0/3.0, -19.0/3.0, -31.0/3.0,  4.0/3.0, 25.0/3.0, 10.0/3.0},  // beta1
+//         { 5.0/3.0, -13.0/3.0, -13.0/3.0,  4.0/3.0, 13.0/3.0,  4.0/3.0},  // beta2
+//         {11.0/3.0, -31.0/3.0, -19.0/3.0, 10.0/3.0, 25.0/3.0,  4.0/3.0}   // beta3
+//     };
+
+//     // Stencil coefficients for different ratio and sub-cell positions
+//     // [ratio_idx][subcell_idx][stencil_idx][coeff_idx]
+//     Real weno_stencil_coeffs[2][4][4][3] = {
+//         // ratio = 2
+//         {
+//             // subcell 0 (r=2, s=-1)
+//             {{21.0/32.0, -66.0/32.0, 77.0/32.0}, {-3.0/32.0, 14.0/32.0, 21.0/32.0}, 
+//              {5.0/32.0, 30.0/32.0, -3.0/32.0}, {45.0/32.0, -18.0/32.0, 5.0/32.0}},
+//             // subcell 1 (r=2, s=1) - same as subcell 0 for symmetric case
+//             {{21.0/32.0, -66.0/32.0, 77.0/32.0}, {-3.0/32.0, 14.0/32.0, 21.0/32.0}, 
+//              {5.0/32.0, 30.0/32.0, -3.0/32.0}, {45.0/32.0, -18.0/32.0, 5.0/32.0}},
+//             // unused
+//             {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}},
+//             {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}}
+//         },
+//         // ratio = 4
+//         {
+//             // subcell 0 (r=4, ii)
+//             {{65.0/128.0, -210.0/128.0, 273.0/128.0}, {-15.0/128.0, 78.0/128.0, 65.0/128.0}, 
+//              {33.0/128.0, 110.0/128.0, -15.0/128.0}, {209.0/128.0, -114.0/128.0, 33.0/128.0}},
+//             // subcell 1 (r=4, ii+1/2)
+//             {{105.0/128.0, -322.0/128.0, 345.0/128.0}, {-7.0/128.0, 30.0/128.0, 105.0/128.0}, 
+//              {9.0/128.0, 126.0/128.0, -7.0/128.0}, {153.0/128.0, -34.0/128.0, 9.0/128.0}},
+//             // subcell 2 (r=4, ii+1) - mirror of subcell 1
+//             {{105.0/128.0, -322.0/128.0, 345.0/128.0}, {-7.0/128.0, 30.0/128.0, 105.0/128.0}, 
+//              {9.0/128.0, 126.0/128.0, -7.0/128.0}, {153.0/128.0, -34.0/128.0, 9.0/128.0}},
+//             // subcell 3 (r=4, ii+3/2) - mirror of subcell 0
+//             {{65.0/128.0, -210.0/128.0, 273.0/128.0}, {-15.0/128.0, 78.0/128.0, 65.0/128.0}, 
+//              {33.0/128.0, 110.0/128.0, -15.0/128.0}, {209.0/128.0, -114.0/128.0, 33.0/128.0}}
+//         }
+//     };
+// #endif
+
+// // Unified WENO interpolation function supporting both ratio=2 and ratio=4
+// AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+// void WENO_Interp_Unified(const amrex::Real& v0, const amrex::Real& v1, const amrex::Real& v2, 
+//                          const amrex::Real& v3, const amrex::Real& v4, const amrex::Real& v5, 
+//                          int ratio_idx, int subcell_idx, amrex::Real& v_edge)
+// {
+//     using namespace amrex;
+    
+//     // Compute smoothness indicators using constant memory coefficients
+//     Real beta[4];
+//     Real tvals[6] = {v0, v1, v2, v3, v4, v5};
+    
+//     for (int k = 0; k < 4; ++k) {
+//         const Real* coeffs = weno_beta_coeffs[k];
+//         Real vals[3] = {tvals[k], tvals[k+1], tvals[k+2]}; // Center values for beta calculation
+//         beta[k] = coeffs[0]*vals[0]*vals[2] + coeffs[1]*vals[0]*vals[1] + coeffs[2]*vals[1]*vals[2] +
+//                   coeffs[3]*vals[0]*vals[0] + coeffs[4]*vals[1]*vals[1] + coeffs[5]*vals[2]*vals[2];
+//     }
+    
+//     // Small value for computing non-linear weights
+//     constexpr Real eps = 1.0e-6;
+    
+//     // Compute alpha values and normalize
+//     Real alpha[4], sum_alpha = 0.0;
+//     for (int k = 0; k < 4; ++k) {
+//         alpha[k] = weno_linear_weights[ratio_idx][subcell_idx][k] / ((eps + beta[k]) * (eps + beta[k]));
+//         sum_alpha += alpha[k];
+//     }
+    
+//     // Compute candidate stencils and final result
+//     Real result = 0.0;
+    
+//     for (int k = 0; k < 4; ++k) {
+//         Real omega = alpha[k] / sum_alpha;
+//         Real q = 0.0;
+//         for (int j = 0; j < 3; ++j) {
+//             q += weno_stencil_coeffs[ratio_idx][subcell_idx][k][j] * tvals[k + j];
+//         }
+//         result += omega * q;
+//     }
+    
+//     v_edge = result;
+// }
+// Using the same 5-point stencil
 #ifdef AMREX_USE_GPU
     // Linear weights for different ratio and sub-cell positions
     // [ratio_idx][subcell_idx][stencil_idx]
-    AMREX_GPU_CONSTANT Real weno_linear_weights[2][4][4] = {
+    AMREX_GPU_CONSTANT Real weno_linear_weights[2][4][3] = {
         // ratio = 2
         {
-            {3.0/256.0, 99.0/256.0, 693.0/1280.0, 77.0/1280.0},  // subcell 0 (r=2, s=-1)
-            {3.0/256.0, 99.0/256.0, 693.0/1280.0, 77.0/1280.0},  // subcell 1 (r=2, s=1)
-            {0.0, 0.0, 0.0, 0.0},  // unused
-            {0.0, 0.0, 0.0, 0.0}   // unused
+            {15.0/64.0, 21.0/32.0, 7.0/64.0},  // subcell 0 (r=2, s=-1)
+            {15.0/64.0, 21.0/32.0, 7.0/64.0},  // subcell 1 (r=2, s=1)
+            {0.0, 0.0, 0.0},  // unused
+            {0.0, 0.0, 0.0}   // unused
         },
         // ratio = 4
         {
-            {209.0/10240.0, 1462.0/3411.0, 271.0/535.0, 91.0/2480.0},  // subcell 0 (r=4, ii)
-            {5.0/1004.0, 111.0/323.0, 1173.0/2048.0, 68.0/865.0},      // subcell 1 (r=4, ii+1/2)
-            {5.0/1004.0, 111.0/323.0, 1173.0/2048.0, 68.0/865.0},      // subcell 2 (r=4, ii+1)
-            {209.0/10240.0, 1462.0/3411.0, 271.0/535.0, 91.0/2480.0}   // subcell 3 (r=4, ii+3/2)
+            {209.0/768.0, 247.0/384.0, 65.0/768.0},  // subcell 0 (r=4, ii)
+            {51.0/256.0,  85.0/128.0,  35.0/256.0},      // subcell 1 (r=4, ii+1/2)
+            {51.0/256.0,  85.0/128.0,  35.0/256.0},      // subcell 2 (r=4, ii+1)
+            {209.0/768.0, 247.0/384.0, 65.0/768.0}   // subcell 3 (r=4, ii+3/2)
         }
     };
 
     // Smoothness indicator coefficients [coeff_idx][term_idx]
     // beta = c0*v0*v2 + c1*v0*v1 + c2*v1*v2 + c3*v0^2 + c4*v1^2 + c5*v2^2
-    AMREX_GPU_CONSTANT Real weno_beta_coeffs[4][6] = {
-        {29.0/3.0, -49.0/3.0, -73.0/3.0, 10.0/3.0, 61.0/3.0, 22.0/3.0},  // beta0
-        {11.0/3.0, -19.0/3.0, -31.0/3.0,  4.0/3.0, 25.0/3.0, 10.0/3.0},  // beta1
-        { 5.0/3.0, -13.0/3.0, -13.0/3.0,  4.0/3.0, 13.0/3.0,  4.0/3.0},  // beta2
-        {11.0/3.0, -31.0/3.0, -19.0/3.0, 10.0/3.0, 25.0/3.0,  4.0/3.0}   // beta3
+    AMREX_GPU_CONSTANT Real weno_beta_coeffs[3][6] = {
+        {11.0/3.0, -19.0/3.0, -31.0/3.0,  4.0/3.0, 25.0/3.0, 10.0/3.0},  // beta0
+        { 5.0/3.0, -13.0/3.0, -13.0/3.0,  4.0/3.0, 13.0/3.0,  4.0/3.0},  // beta1
+        {11.0/3.0, -31.0/3.0, -19.0/3.0, 10.0/3.0, 25.0/3.0,  4.0/3.0}   // beta2
     };
 
     // Stencil coefficients for different ratio and sub-cell positions
     // [ratio_idx][subcell_idx][stencil_idx][coeff_idx]
-    AMREX_GPU_CONSTANT Real weno_stencil_coeffs[2][4][4][3] = {
+    AMREX_GPU_CONSTANT Real weno_stencil_coeffs[2][4][3][3] = {
         // ratio = 2
         {
             // subcell 0 (r=2, s=-1)
-            {{21.0/32.0, -66.0/32.0, 77.0/32.0}, {-3.0/32.0, 14.0/32.0, 21.0/32.0}, 
-             {5.0/32.0, 30.0/32.0, -3.0/32.0}, {45.0/32.0, -18.0/32.0, 5.0/32.0}},
+            {{-3.0/32.0, 14.0/32.0, 21.0/32.0}, {5.0/32.0, 30.0/32.0, -3.0/32.0}, {45.0/32.0, -18.0/32.0, 5.0/32.0}},
             // subcell 1 (r=2, s=1) - same as subcell 0 for symmetric case
-            {{21.0/32.0, -66.0/32.0, 77.0/32.0}, {-3.0/32.0, 14.0/32.0, 21.0/32.0}, 
-             {5.0/32.0, 30.0/32.0, -3.0/32.0}, {45.0/32.0, -18.0/32.0, 5.0/32.0}},
+            {{-3.0/32.0, 14.0/32.0, 21.0/32.0}, {5.0/32.0, 30.0/32.0, -3.0/32.0}, {45.0/32.0, -18.0/32.0, 5.0/32.0}},
             // unused
-            {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}},
-            {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}}
+            {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}},
+            {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}}
         },
         // ratio = 4
         {
             // subcell 0 (r=4, ii)
-            {{65.0/128.0, -210.0/128.0, 273.0/128.0}, {-15.0/128.0, 78.0/128.0, 65.0/128.0}, 
-             {33.0/128.0, 110.0/128.0, -15.0/128.0}, {209.0/128.0, -114.0/128.0, 33.0/128.0}},
+            {{-15.0/128.0, 78.0/128.0, 65.0/128.0}, {33.0/128.0, 110.0/128.0, -15.0/128.0}, {209.0/128.0, -114.0/128.0, 33.0/128.0}},
             // subcell 1 (r=4, ii+1/2)
-            {{105.0/128.0, -322.0/128.0, 345.0/128.0}, {-7.0/128.0, 30.0/128.0, 105.0/128.0}, 
-             {9.0/128.0, 126.0/128.0, -7.0/128.0}, {153.0/128.0, -34.0/128.0, 9.0/128.0}},
+            {{-7.0/128.0, 30.0/128.0, 105.0/128.0}, {9.0/128.0, 126.0/128.0, -7.0/128.0}, {153.0/128.0, -34.0/128.0, 9.0/128.0}},
             // subcell 2 (r=4, ii+1) - mirror of subcell 1
-            {{105.0/128.0, -322.0/128.0, 345.0/128.0}, {-7.0/128.0, 30.0/128.0, 105.0/128.0}, 
-             {9.0/128.0, 126.0/128.0, -7.0/128.0}, {153.0/128.0, -34.0/128.0, 9.0/128.0}},
+            {{-7.0/128.0, 30.0/128.0, 105.0/128.0}, {9.0/128.0, 126.0/128.0, -7.0/128.0}, {153.0/128.0, -34.0/128.0, 9.0/128.0}},
             // subcell 3 (r=4, ii+3/2) - mirror of subcell 0
-            {{65.0/128.0, -210.0/128.0, 273.0/128.0}, {-15.0/128.0, 78.0/128.0, 65.0/128.0}, 
-             {33.0/128.0, 110.0/128.0, -15.0/128.0}, {209.0/128.0, -114.0/128.0, 33.0/128.0}}
+            {{-15.0/128.0, 78.0/128.0, 65.0/128.0}, {33.0/128.0, 110.0/128.0, -15.0/128.0}, {209.0/128.0, -114.0/128.0, 33.0/128.0}}
         }
     };
 #else
     // Linear weights for different ratio and sub-cell positions
     // [ratio_idx][subcell_idx][stencil_idx]
-    Real weno_linear_weights[2][4][4] = {
+    Real weno_linear_weights[2][4][3] = {
         // ratio = 2
         {
-            {3.0/256.0, 99.0/256.0, 693.0/1280.0, 77.0/1280.0},  // subcell 0 (r=2, s=-1)
-            {3.0/256.0, 99.0/256.0, 693.0/1280.0, 77.0/1280.0},  // subcell 1 (r=2, s=1)
-            {0.0, 0.0, 0.0, 0.0},  // unused
-            {0.0, 0.0, 0.0, 0.0}   // unused
+            {15.0/64.0, 21.0/32.0, 7.0/64.0},  // subcell 0 (r=2, s=-1)
+            {15.0/64.0, 21.0/32.0, 7.0/64.0},  // subcell 1 (r=2, s=1)
+            {0.0, 0.0, 0.0},  // unused
+            {0.0, 0.0, 0.0}   // unused
         },
         // ratio = 4
         {
-            {209.0/10240.0, 1462.0/3411.0, 271.0/535.0, 91.0/2480.0},  // subcell 0 (r=4, ii)
-            {5.0/1004.0, 111.0/323.0, 1173.0/2048.0, 68.0/865.0},      // subcell 1 (r=4, ii+1/2)
-            {5.0/1004.0, 111.0/323.0, 1173.0/2048.0, 68.0/865.0},      // subcell 2 (r=4, ii+1)
-            {209.0/10240.0, 1462.0/3411.0, 271.0/535.0, 91.0/2480.0}   // subcell 3 (r=4, ii+3/2)
+            {209.0/768.0, 247.0/384.0, 65.0/768.0},  // subcell 0 (r=4, ii)
+            {51.0/256.0,  85.0/128.0,  35.0/256.0},      // subcell 1 (r=4, ii+1/2)
+            {51.0/256.0,  85.0/128.0,  35.0/256.0},      // subcell 2 (r=4, ii+1)
+            {209.0/768.0, 247.0/384.0, 65.0/768.0}   // subcell 3 (r=4, ii+3/2)
         }
     };
 
     // Smoothness indicator coefficients [coeff_idx][term_idx]
     // beta = c0*v0*v2 + c1*v0*v1 + c2*v1*v2 + c3*v0^2 + c4*v1^2 + c5*v2^2
-    Real weno_beta_coeffs[4][6] = {
-        {29.0/3.0, -49.0/3.0, -73.0/3.0, 10.0/3.0, 61.0/3.0, 22.0/3.0},  // beta0
-        {11.0/3.0, -19.0/3.0, -31.0/3.0,  4.0/3.0, 25.0/3.0, 10.0/3.0},  // beta1
-        { 5.0/3.0, -13.0/3.0, -13.0/3.0,  4.0/3.0, 13.0/3.0,  4.0/3.0},  // beta2
-        {11.0/3.0, -31.0/3.0, -19.0/3.0, 10.0/3.0, 25.0/3.0,  4.0/3.0}   // beta3
+    Real weno_beta_coeffs[3][6] = {
+        {11.0/3.0, -19.0/3.0, -31.0/3.0,  4.0/3.0, 25.0/3.0, 10.0/3.0},  // beta0
+        { 5.0/3.0, -13.0/3.0, -13.0/3.0,  4.0/3.0, 13.0/3.0,  4.0/3.0},  // beta1
+        {11.0/3.0, -31.0/3.0, -19.0/3.0, 10.0/3.0, 25.0/3.0,  4.0/3.0}   // beta2
     };
 
     // Stencil coefficients for different ratio and sub-cell positions
     // [ratio_idx][subcell_idx][stencil_idx][coeff_idx]
-    Real weno_stencil_coeffs[2][4][4][3] = {
+    Real weno_stencil_coeffs[2][4][3][3] = {
         // ratio = 2
         {
             // subcell 0 (r=2, s=-1)
-            {{21.0/32.0, -66.0/32.0, 77.0/32.0}, {-3.0/32.0, 14.0/32.0, 21.0/32.0}, 
-             {5.0/32.0, 30.0/32.0, -3.0/32.0}, {45.0/32.0, -18.0/32.0, 5.0/32.0}},
+            {{-3.0/32.0, 14.0/32.0, 21.0/32.0}, {5.0/32.0, 30.0/32.0, -3.0/32.0}, {45.0/32.0, -18.0/32.0, 5.0/32.0}},
             // subcell 1 (r=2, s=1) - same as subcell 0 for symmetric case
-            {{21.0/32.0, -66.0/32.0, 77.0/32.0}, {-3.0/32.0, 14.0/32.0, 21.0/32.0}, 
-             {5.0/32.0, 30.0/32.0, -3.0/32.0}, {45.0/32.0, -18.0/32.0, 5.0/32.0}},
+            {{-3.0/32.0, 14.0/32.0, 21.0/32.0}, {5.0/32.0, 30.0/32.0, -3.0/32.0}, {45.0/32.0, -18.0/32.0, 5.0/32.0}},
             // unused
-            {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}},
-            {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}}
+            {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}},
+            {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}}
         },
         // ratio = 4
         {
             // subcell 0 (r=4, ii)
-            {{65.0/128.0, -210.0/128.0, 273.0/128.0}, {-15.0/128.0, 78.0/128.0, 65.0/128.0}, 
-             {33.0/128.0, 110.0/128.0, -15.0/128.0}, {209.0/128.0, -114.0/128.0, 33.0/128.0}},
+            {{-15.0/128.0, 78.0/128.0, 65.0/128.0}, {33.0/128.0, 110.0/128.0, -15.0/128.0}, {209.0/128.0, -114.0/128.0, 33.0/128.0}},
             // subcell 1 (r=4, ii+1/2)
-            {{105.0/128.0, -322.0/128.0, 345.0/128.0}, {-7.0/128.0, 30.0/128.0, 105.0/128.0}, 
-             {9.0/128.0, 126.0/128.0, -7.0/128.0}, {153.0/128.0, -34.0/128.0, 9.0/128.0}},
+            {{-7.0/128.0, 30.0/128.0, 105.0/128.0}, {9.0/128.0, 126.0/128.0, -7.0/128.0}, {153.0/128.0, -34.0/128.0, 9.0/128.0}},
             // subcell 2 (r=4, ii+1) - mirror of subcell 1
-            {{105.0/128.0, -322.0/128.0, 345.0/128.0}, {-7.0/128.0, 30.0/128.0, 105.0/128.0}, 
-             {9.0/128.0, 126.0/128.0, -7.0/128.0}, {153.0/128.0, -34.0/128.0, 9.0/128.0}},
+            {{-7.0/128.0, 30.0/128.0, 105.0/128.0}, {9.0/128.0, 126.0/128.0, -7.0/128.0}, {153.0/128.0, -34.0/128.0, 9.0/128.0}},
             // subcell 3 (r=4, ii+3/2) - mirror of subcell 0
-            {{65.0/128.0, -210.0/128.0, 273.0/128.0}, {-15.0/128.0, 78.0/128.0, 65.0/128.0}, 
-             {33.0/128.0, 110.0/128.0, -15.0/128.0}, {209.0/128.0, -114.0/128.0, 33.0/128.0}}
+            {{-15.0/128.0, 78.0/128.0, 65.0/128.0}, {33.0/128.0, 110.0/128.0, -15.0/128.0}, {209.0/128.0, -114.0/128.0, 33.0/128.0}}
         }
     };
 #endif
 }
 
+
+// Using the same stencil points: 5-point WENO interpolation
 // Unified WENO interpolation function supporting both ratio=2 and ratio=4
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-void WENO_Interp_Unified(const amrex::Real& v0, const amrex::Real& v1, const amrex::Real& v2, 
+void WENO_Interp_Unified(const amrex::Real& v1, const amrex::Real& v2, 
                          const amrex::Real& v3, const amrex::Real& v4, const amrex::Real& v5, 
                          int ratio_idx, int subcell_idx, amrex::Real& v_edge)
 {
     using namespace amrex;
     
     // Compute smoothness indicators using constant memory coefficients
-    Real beta[4];
-    Real tvals[6] = {v0, v1, v2, v3, v4, v5};
+    Real beta[3];
+    Real tvals[5] = {v1, v2, v3, v4, v5};
     
-    for (int k = 0; k < 4; ++k) {
+    for (int k = 0; k < 3; ++k) {
         const Real* coeffs = weno_beta_coeffs[k];
         Real vals[3] = {tvals[k], tvals[k+1], tvals[k+2]}; // Center values for beta calculation
         beta[k] = coeffs[0]*vals[0]*vals[2] + coeffs[1]*vals[0]*vals[1] + coeffs[2]*vals[1]*vals[2] +
@@ -816,8 +971,8 @@ void WENO_Interp_Unified(const amrex::Real& v0, const amrex::Real& v1, const amr
     constexpr Real eps = 1.0e-6;
     
     // Compute alpha values and normalize
-    Real alpha[4], sum_alpha = 0.0;
-    for (int k = 0; k < 4; ++k) {
+    Real alpha[3], sum_alpha = 0.0;
+    for (int k = 0; k < 3; ++k) {
         alpha[k] = weno_linear_weights[ratio_idx][subcell_idx][k] / ((eps + beta[k]) * (eps + beta[k]));
         sum_alpha += alpha[k];
     }
@@ -825,7 +980,7 @@ void WENO_Interp_Unified(const amrex::Real& v0, const amrex::Real& v1, const amr
     // Compute candidate stencils and final result
     Real result = 0.0;
     
-    for (int k = 0; k < 4; ++k) {
+    for (int k = 0; k < 3; ++k) {
         Real omega = alpha[k] / sum_alpha;
         Real q = 0.0;
         for (int j = 0; j < 3; ++j) {
@@ -849,20 +1004,28 @@ void central_weno_interp_x (int i, int j, int k, int n,
         int s = 2 * (i - ii*2) - 1; // i=ii*2, s = -1; i=ii*2+1, s = 1
         int subcell_idx = i - ii*2;
 
-        WENO_Interp_Unified(crse(ii+s*3,j,k,n), crse(ii+s*2,j,k,n), 
-                           crse(ii+s*1,j,k,n), crse(ii,j,k,n),
-                           crse(ii-s*1,j,k,n), crse(ii-s*2,j,k,n),
-                           0, subcell_idx, fine(i,j,k,n));
+        // WENO_Interp_Unified(crse(ii+s*3,j,k,n), crse(ii+s*2,j,k,n), 
+        //                    crse(ii+s*1,j,k,n), crse(ii,j,k,n),
+        //                    crse(ii-s*1,j,k,n), crse(ii-s*2,j,k,n),
+        //                    0, subcell_idx, fine(i,j,k,n));
+        WENO_Interp_Unified(crse(ii+s*2,j,k,n), 
+                            crse(ii+s*1,j,k,n), crse(ii,j,k,n),
+                            crse(ii-s*1,j,k,n), crse(ii-s*2,j,k,n),
+                            0, subcell_idx, fine(i,j,k,n));
     } else if (ratio[0] == 4) {
         // ratio = 4 case
         int ii = amrex::coarsen(i,4);
         int subcell_idx = i - ii*4; // 0, 1, 2, or 3
         int s = 2 * (subcell_idx/2) - 1; // i=ii*2 or ii*2+1, s = -1; i=ii*2+2 or ii*2+3, s = 1
         
-        WENO_Interp_Unified(crse(ii+s*3,j,k,n), crse(ii+s*2,j,k,n), 
-                           crse(ii+s*1,j,k,n), crse(ii,j,k,n),
-                           crse(ii-s*1,j,k,n), crse(ii-s*2,j,k,n),
-                           1, subcell_idx, fine(i,j,k,n));
+        // WENO_Interp_Unified(crse(ii+s*3,j,k,n), crse(ii+s*2,j,k,n), 
+        //                    crse(ii+s*1,j,k,n), crse(ii,j,k,n),
+        //                    crse(ii-s*1,j,k,n), crse(ii-s*2,j,k,n),
+        //                    1, subcell_idx, fine(i,j,k,n));
+        WENO_Interp_Unified(crse(ii+s*2,j,k,n), 
+                            crse(ii+s*1,j,k,n), crse(ii,j,k,n),
+                            crse(ii-s*1,j,k,n), crse(ii-s*2,j,k,n),
+                            1, subcell_idx, fine(i,j,k,n));                   
     }
 }
 
@@ -878,20 +1041,28 @@ void central_weno_interp_y (int i, int j, int k, int n,
         int s = 2 * (j - jj*2) - 1; // j=jj*2, s = -1; j=jj*2+1, s = 1
         int subcell_idx = j - jj*2;
 
-        WENO_Interp_Unified(crse(i,jj+s*3,k,n), crse(i,jj+s*2,k,n), 
-                           crse(i,jj+s*1,k,n), crse(i,jj,k,n),
-                           crse(i,jj-s*1,k,n), crse(i,jj-s*2,k,n),
-                           0, subcell_idx, fine(i,j,k,n));
+        // WENO_Interp_Unified(crse(i,jj+s*3,k,n), crse(i,jj+s*2,k,n), 
+        //                    crse(i,jj+s*1,k,n), crse(i,jj,k,n),
+        //                    crse(i,jj-s*1,k,n), crse(i,jj-s*2,k,n),
+        //                    0, subcell_idx, fine(i,j,k,n));
+        WENO_Interp_Unified(crse(i,jj+s*2,k,n), 
+                            crse(i,jj+s*1,k,n), crse(i,jj,k,n),
+                            crse(i,jj-s*1,k,n), crse(i,jj-s*2,k,n),
+                            0, subcell_idx, fine(i,j,k,n));
     } else if (ratio[1] == 4) {
         // ratio = 4 case
         int jj = amrex::coarsen(j,4);
         int subcell_idx = j - jj*4; // 0, 1, 2, or 3
         int s = 2 * (subcell_idx/2) - 1; // j=jj*2 or jj*2+1, s = -1; j=jj*2+2 or jj*2+3, s = 1
         
-        WENO_Interp_Unified(crse(i,jj+s*3,k,n), crse(i,jj+s*2,k,n), 
-                           crse(i,jj+s*1,k,n), crse(i,jj,k,n),
-                           crse(i,jj-s*1,k,n), crse(i,jj-s*2,k,n),
-                           1, subcell_idx, fine(i,j,k,n));
+        // WENO_Interp_Unified(crse(i,jj+s*3,k,n), crse(i,jj+s*2,k,n), 
+        //                    crse(i,jj+s*1,k,n), crse(i,jj,k,n),
+        //                    crse(i,jj-s*1,k,n), crse(i,jj-s*2,k,n),
+        //                    1, subcell_idx, fine(i,j,k,n));
+        WENO_Interp_Unified(crse(i,jj+s*2,k,n), 
+                            crse(i,jj+s*1,k,n), crse(i,jj,k,n),
+                            crse(i,jj-s*1,k,n), crse(i,jj-s*2,k,n),
+                            1, subcell_idx, fine(i,j,k,n));
     }
 }
 
@@ -907,20 +1078,28 @@ void central_weno_interp_z (int i, int j, int k, int n,
         int s = 2 * (k - kk*2) - 1; // k=kk*2, s = -1; k=kk*2+1, s = 1
         int subcell_idx = k - kk*2;
 
-        WENO_Interp_Unified(crse(i,j,kk+s*3,n), crse(i,j,kk+s*2,n), 
-                           crse(i,j,kk+s*1,n), crse(i,j,kk,n),
-                           crse(i,j,kk-s*1,n), crse(i,j,kk-s*2,n),
-                           0, subcell_idx, fine(i,j,k,n));
+        // WENO_Interp_Unified(crse(i,j,kk+s*3,n), crse(i,j,kk+s*2,n), 
+        //                    crse(i,j,kk+s*1,n), crse(i,j,kk,n),
+        //                    crse(i,j,kk-s*1,n), crse(i,j,kk-s*2,n),
+        //                    0, subcell_idx, fine(i,j,k,n));
+        WENO_Interp_Unified(crse(i,j,kk+s*2,n), 
+                            crse(i,j,kk+s*1,n), crse(i,j,kk,n),
+                            crse(i,j,kk-s*1,n), crse(i,j,kk-s*2,n),
+                            0, subcell_idx, fine(i,j,k,n));
     } else if (ratio[2] == 4) {
         // ratio = 4 case
         int kk = amrex::coarsen(k,4);
         int subcell_idx = k - kk*4; // 0, 1, 2, or 3
         int s = 2 * (subcell_idx/2) - 1; // k=kk*2 or kk*2+1, s = -1; k=kk*2+2 or kk*2+3, s = 1
         
-        WENO_Interp_Unified(crse(i,j,kk+s*3,n), crse(i,j,kk+s*2,n), 
-                           crse(i,j,kk+s*1,n), crse(i,j,kk,n),
-                           crse(i,j,kk-s*1,n), crse(i,j,kk-s*2,n),
-                           1, subcell_idx, fine(i,j,k,n));
+        // WENO_Interp_Unified(crse(i,j,kk+s*3,n), crse(i,j,kk+s*2,n), 
+        //                    crse(i,j,kk+s*1,n), crse(i,j,kk,n),
+        //                    crse(i,j,kk-s*1,n), crse(i,j,kk-s*2,n),
+        //                    1, subcell_idx, fine(i,j,k,n));
+        WENO_Interp_Unified(crse(i,j,kk+s*2,n), 
+                            crse(i,j,kk+s*1,n), crse(i,j,kk,n),
+                            crse(i,j,kk-s*1,n), crse(i,j,kk-s*2,n),
+                            1, subcell_idx, fine(i,j,k,n));
     }
 }
 
@@ -1173,12 +1352,12 @@ void weno_restrict_x (int i, int j, int k, int n, Array4<Real> const& crse,
             WENO_Restrict_Unified(fine(ii,j,k,n),   fine(ii+1,j,k,n),
                                   fine(ii+2,j,k,n), fine(ii+3,j,k,n),
                                   fine(ii+4,j,k,n), fine(ii+5,j,k,n),
-                                  0, true, true, crse(i,j,k,n));
+                                  0, false, true, crse(i,j,k,n));
         } else if (i == big_end) {
             WENO_Restrict_Unified(fine(ii+1,j,k,n), fine(ii,j,k,n),
                                   fine(ii-1,j,k,n), fine(ii-2,j,k,n),
                                   fine(ii-3,j,k,n), fine(ii-4,j,k,n),
-                                  0, true, true, crse(i,j,k,n));
+                                  0, false, true, crse(i,j,k,n));
         }
     } else if (ratio[0] == 4) {
         if (i > small_end && i < big_end) {
@@ -1190,12 +1369,12 @@ void weno_restrict_x (int i, int j, int k, int n, Array4<Real> const& crse,
             WENO_Restrict_Unified(fine(ii,j,k,n),   fine(ii+1,j,k,n),
                                   fine(ii+2,j,k,n), fine(ii+3,j,k,n),
                                   fine(ii+4,j,k,n), fine(ii+5,j,k,n),
-                                  1, true, true, crse(i,j,k,n));
+                                  1, false, true, crse(i,j,k,n));
         } else if (i == big_end) {
             WENO_Restrict_Unified(fine(ii+3,j,k,n), fine(ii+2,j,k,n),
                                   fine(ii+1,j,k,n), fine(ii,j,k,n),
                                   fine(ii-1,j,k,n), fine(ii-2,j,k,n),
-                                  1, true, true, crse(i,j,k,n));
+                                  1, false, true, crse(i,j,k,n));
         }
     } else {
         amrex::Abort("weno_restrict_x: how did this happen?");
@@ -1218,12 +1397,12 @@ void weno_restrict_y (int i, int j, int k, int n, Array4<Real> const& crse,
             WENO_Restrict_Unified(fine(i,jj,k,n),   fine(i,jj+1,k,n),
                                   fine(i,jj+2,k,n), fine(i,jj+3,k,n),
                                   fine(i,jj+4,k,n), fine(i,jj+5,k,n),
-                                  0, true, true, crse(i,j,k,n));
+                                  0, false, true, crse(i,j,k,n));
         } else if (j == big_end) {
             WENO_Restrict_Unified(fine(i,jj+1,k,n), fine(i,jj,k,n),
                                   fine(i,jj-1,k,n), fine(i,jj-2,k,n),
                                   fine(i,jj-3,k,n), fine(i,jj-4,k,n),
-                                  0, true, true, crse(i,j,k,n));
+                                  0, false, true, crse(i,j,k,n));
         }
     } else if (ratio[1] == 4) {
         if (j > small_end && j < big_end) {
@@ -1235,12 +1414,12 @@ void weno_restrict_y (int i, int j, int k, int n, Array4<Real> const& crse,
             WENO_Restrict_Unified(fine(i,jj,k,n),   fine(i,jj+1,k,n),
                                   fine(i,jj+2,k,n), fine(i,jj+3,k,n),
                                   fine(i,jj+4,k,n), fine(i,jj+5,k,n),
-                                  1, true, true, crse(i,j,k,n));
+                                  1, false, true, crse(i,j,k,n));
         } else if (j == big_end) {
             WENO_Restrict_Unified(fine(i,jj+3,k,n),   fine(i,jj+2,k,n),
                                   fine(i,jj+1,k,n), fine(i,jj,k,n),
                                   fine(i,jj-1,k,n), fine(i,jj-2,k,n),
-                                  1, true, true, crse(i,j,k,n));
+                                  1, false, true, crse(i,j,k,n));
         }
     } else {
         amrex::Abort("weno_restrict_y: how did this happen?");
@@ -1263,12 +1442,12 @@ void weno_restrict_z (int i, int j, int k, int n, Array4<Real> const& crse,
             WENO_Restrict_Unified(fine(i,j,kk,n),   fine(i,j,kk+1,n),
                                   fine(i,j,kk+2,n), fine(i,j,kk+3,n),
                                   fine(i,j,kk+4,n), fine(i,j,kk+5,n),
-                                  0, true, true, crse(i,j,k,n));
+                                  0, false, true, crse(i,j,k,n));
         } else if (k == big_end) {
             WENO_Restrict_Unified(fine(i,j,kk+1,n), fine(i,j,kk,n),
                                   fine(i,j,kk-1,n), fine(i,j,kk-2,n),
                                   fine(i,j,kk-3,n), fine(i,j,kk-4,n),
-                                  0, true, true, crse(i,j,k,n));
+                                  0, false, true, crse(i,j,k,n));
         }
     } else if (ratio[2] == 4) {
         if (k > small_end && k < big_end) {
@@ -1280,12 +1459,12 @@ void weno_restrict_z (int i, int j, int k, int n, Array4<Real> const& crse,
             WENO_Restrict_Unified(fine(i,j,kk,n),   fine(i,j,kk+1,n),
                                   fine(i,j,kk+2,n), fine(i,j,kk+3,n),
                                   fine(i,j,kk+4,n), fine(i,j,kk+5,n),
-                                  1, true, true, crse(i,j,k,n));
+                                  1, false, true, crse(i,j,k,n));
         } else if (k == big_end) {
             WENO_Restrict_Unified(fine(i,j,kk+3,n),   fine(i,j,kk+2,n),
                                   fine(i,j,kk+1,n), fine(i,j,kk,n),
                                   fine(i,j,kk-1,n), fine(i,j,kk-2,n),
-                                  1, true, true, crse(i,j,k,n));
+                                  1, false, true, crse(i,j,k,n));
         }
     } else {
         amrex::Abort("weno_restrict_z: how did this happen?");

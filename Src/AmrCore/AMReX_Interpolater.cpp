@@ -1887,6 +1887,10 @@ Mortar2D::interp (const FArrayBox& crse,
     bool run_on_gpu = (runon == RunOn::Gpu && Gpu::inLaunchRegion());
     amrex::ignore_unused(run_on_gpu);
 
+    // amrex::Print() << "crse_comp= " << crse_comp
+    //                << "\nfine_comp= " << fine_comp << std::endl;
+    // amrex::Abort("aa");
+
     Array4<Real const> const& crsearr = crse.const_array(crse_comp);
     Array4<Real>       const& finearr = fine.array(fine_comp);
 
@@ -1945,7 +1949,7 @@ Mortar2D::mortar_interp(const int i, const int j, const int k, const int n,
             }
         }
 
-        int ioff = i-2*ic, joff = j-2*jc;
+        int ioff = i-ratio[0]*ic, joff = j-ratio[1]*jc;
         for (int s = 0; s < sd_order; ++s) {
             for (int m = 0; m < sd_order; ++m) {
                 nc = box2point(s, m, 0, n);
@@ -1977,31 +1981,38 @@ Mortar2D::mortar_interp(const int i, const int j, const int k, const int n,
 
         Real tmp[sd_order][sd_order];
     
-        int joff = j-2*jc;
+        int joff = j-ratio[1]*jc;
         // 5*5 temporary state
         for (int s = 0; s < sd_order; ++s) {
             for (int m = 0; m < sd_order; ++m) {
                 tmp[s][m] = Real(0);
                 for (int q = 0; q < sd_order; ++q) {
-                    tmp[s][m] += uc[s][q] * (Real(2.0) * Py2D[joff][q][m]);
+                    tmp[s][m] += uc[s][q] * (Real(1.0) * Py2D_prol[joff][q][m]);
                 }
             }
         }
 
-        int ioff = i-2*ic;
+        int ioff = i-ratio[0]*ic;
         for (int s = 0; s < sd_order; ++s) {
             for (int m = 0; m < sd_order; ++m) {
+                nc = box2point(s, m, 0, n);
                 finearr(i,j,k,nc) = Real(0);
                 for (int q = 0; q < sd_order; ++q) {
-                    nc = box2point(s, m, 0, n);
-                    finearr(i,j,k,nc) += (Real(2.0) * Px2D[ioff][s][q]) * tmp[q][m];
+                    finearr(i,j,k,nc) += (Real(1.0) * Px2D_prol[ioff][s][q]) * tmp[q][m];
                 }
             }
         }
+        // ---------------- debug ----------------------------------
+        // for (int z = 0; z < sd_order; ++z) {
+        //     amrex::Print() << "\nic= " << ic << "jc= " << jc << "\ncoarse fab=" << crsearr(ic,jc,kc,z) << " ";
+        // }
+        // for (int z = 0; z < sd_order; ++z) {
+        //     amrex::Print() << "\ni= " << i << "j= " << j << "\nfine fab=" << finearr(i,j,k,z) << " ";
+        // }
         return;
 
     } else {
-        amrex::Abort("Unknown strategy for c->f projection");
+        amrex::Abort("Unknown strategy for c->f prolongation");
     }
 }
 
@@ -2038,7 +2049,7 @@ Mortar2D::restrict (const FArrayBox& fine,
 #if (AMREX_SPACEDIM == 2)
     auto const& destarr = crsearr;
     auto const& srcarr  = finearr;
-    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_crse_region, ncomp/(sd_order*sd_order), i, j, k, n,
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_crse_region, ncomp/sd_space, i, j, k, n,
     {
         mortar_restrict(i,j,k,n,destarr,srcarr,ratio);
     });
@@ -2079,7 +2090,7 @@ Mortar2D::mortar_restrict(const int i, const int j, const int k, const int n,
         Real tmp[sd_order*2][sd_order];
         for (int s = 0; s < sd_order*2; ++s) {
             for (int m = 0; m < sd_order; ++m) {
-                tmp[s][m] = 0.0;
+                tmp[s][m] = Real(0.0);
                 for (int q = 0; q < sd_order*2; ++q) {
                     tmp[s][m] += uf[s][q] * Py[q][m];
                 }
@@ -2088,7 +2099,7 @@ Mortar2D::mortar_restrict(const int i, const int j, const int k, const int n,
 
         for (int s = 0; s < sd_order; ++s) {
             for (int m = 0; m < sd_order; ++m) {
-                uc[s][m] = Real(0);
+                uc[s][m] = Real(0.0);
                 for (int q = 0; q < sd_order*2; ++q) {
                     uc[s][m] += Px[s][q]*tmp[q][m];
                 }
@@ -2155,7 +2166,7 @@ Mortar2D::mortar_restrict(const int i, const int j, const int k, const int n,
         return;
 
     } else {
-        amrex::Abort("Unknown strategy for f->c projection");
+        amrex::Abort("Unknown strategy for f->c restriction");
     }
 }
 

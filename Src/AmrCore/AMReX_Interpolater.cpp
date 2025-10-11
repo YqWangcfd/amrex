@@ -2063,17 +2063,19 @@ Mortar2D::mortar_restrict(const int i, const int j, const int k, const int n,
                 Array4<Real> const crsearr, Array4<const Real> const& finearr,
                 const IntVect&   ratio)
 {
+    AMREX_ASSERT(ratio[0]==2 && ratio[1]==2);
     if (Mortar2D::type == Type::OrderRef)
     {
         // define a smaller and a larger 2D matrix 
-        Real uc[sd_order][sd_order];
-        Real uf[sd_order*2][sd_order*2]; // row <i> of u corresponds to physical axis <x>
+        Real uc[sd_order][sd_order] = {};
+        Real uf[sd_order*2][sd_order*2] = {};
 
 
         int ii = i*ratio[0];
         int jj = j*ratio[1];
         int kk = (AMREX_SPACEDIM>2)? k*ratio[2] : 0;
 
+        // assemble larger 2D working matrix on finer grids
         int nc;
         for (int s = 0; s < sd_order; ++s) {
             for (int m = 0; m < sd_order; ++m) {
@@ -2087,10 +2089,11 @@ Mortar2D::mortar_restrict(const int i, const int j, const int k, const int n,
             }
         }
 
-        Real tmp[sd_order*2][sd_order];
+        // execuate y-direction projection first
+        Real tmp[sd_order*2][sd_order] = {};
         for (int s = 0; s < sd_order*2; ++s) {
             for (int m = 0; m < sd_order; ++m) {
-                tmp[s][m] = Real(0.0);
+                // tmp[s][m] = Real(0.0);
                 for (int q = 0; q < sd_order*2; ++q) {
                     tmp[s][m] += uf[s][q] * Py[q][m];
                 }
@@ -2099,7 +2102,7 @@ Mortar2D::mortar_restrict(const int i, const int j, const int k, const int n,
 
         for (int s = 0; s < sd_order; ++s) {
             for (int m = 0; m < sd_order; ++m) {
-                uc[s][m] = Real(0.0);
+                // uc[s][m] = Real(0.0);
                 for (int q = 0; q < sd_order*2; ++q) {
                     uc[s][m] += Px[s][q]*tmp[q][m];
                 }

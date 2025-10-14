@@ -2052,6 +2052,7 @@ Mortar2D::restrict (const FArrayBox& fine,
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_crse_region, ncomp/sd_space, i, j, k, n,
     {
         mortar_restrict(i,j,k,n,destarr,srcarr,ratio);
+        // mortar_restrict_flatten(i,j,k,n,destarr,srcarr,ratio);
     });
 #endif
 }
@@ -2109,6 +2110,121 @@ Mortar2D::mortar_restrict(const int i, const int j, const int k, const int n,
                 // 5×5 coarse state
                 nc = box2point(s, m, 0, n);
                 crsearr(i,j,k,nc) = uc[s][m];
+            }
+        }
+        return;
+
+    } else if (Mortar2D::type == Type::ScaleRef)
+    {
+        // define four 2D mass matrices with equivalent sizes
+        Real uc[sd_order][sd_order];
+        Real uf[2][2][sd_order][sd_order]; // row <i> of u corresponds to physical axis <x>
+
+
+        int ii = i*ratio[0];
+        int jj = j*ratio[1];
+        int kk = (AMREX_SPACEDIM>2)? k*ratio[2] : 0;
+
+        int nc;
+        for (int s = 0; s < sd_order; ++s) {
+            for (int m = 0; m < sd_order; ++m) {
+                // 2D 5*5 fine state
+                for (int ioff = 0; ioff < ratio[0]; ++ioff) {
+                    for (int joff = 0; joff < ratio[1]; ++joff) {
+                        nc = box2point(s, m, 0, n);
+                        uf[ioff][joff][s][m] = finearr(ii+ioff,jj+joff,kk,nc);
+                    }
+                }
+            }
+        }
+
+        Real tmp[2][2][sd_order][sd_order];
+        // 5*5 fine state
+        for (int ioff = 0; ioff < ratio[0]; ++ioff) {
+            for (int joff = 0; joff < ratio[1]; ++joff) {
+                for (int s = 0; s < sd_order; ++s) {
+                    for (int m = 0; m < sd_order; ++m) {
+                        tmp[ioff][joff][s][m] = Real(0);
+                        for (int q = 0; q < sd_order; ++q) {
+                            tmp[ioff][joff][s][m] += uf[ioff][joff][s][q] * Py2D[joff][q][m];
+                        }
+                    }
+                }
+            }
+        }
+
+        for (int s = 0; s < sd_order; ++s) {
+            for (int m = 0; m < sd_order; ++m) {
+                uc[s][m] = Real(0);
+                for (int ioff = 0; ioff < ratio[0]; ++ioff) {
+                    for (int joff = 0; joff < ratio[1]; ++joff) {
+                        for (int q = 0; q < sd_order; ++q) {
+                            uc[s][m] += Px2D[ioff][s][q] * tmp[ioff][joff][q][m];
+                        }
+                    }
+                }
+                nc = box2point(s, m, 0, n);
+                crsearr(i,j,k,nc) = uc[s][m];
+            }
+        }
+        return;
+
+    } else {
+        amrex::Abort("Unknown strategy for f->c restriction");
+    }
+}
+
+AMREX_GPU_HOST_DEVICE
+AMREX_FORCE_INLINE
+void
+Mortar2D::mortar_restrict_flatten(const int i, const int j, const int k, const int n, 
+                                  Array4<Real> const crsearr, Array4<const Real> const& finearr,
+                                  const IntVect&   ratio)
+{
+    AMREX_ASSERT(ratio[0]==2 && ratio[1]==2);
+    if (Mortar2D::type == Type::OrderRef)
+    {
+        // define the coarse- and fine-state vectors 
+        int fsd_order = ratio[0]*sd_order;
+        int fsd_space = fsd_order*fsd_order;
+        Real uc[sd_space]  = {};
+        Real uf[fsd_space] = {};
+
+        // indices on the fine grids
+        int ii = i*ratio[0];
+        int jj = j*ratio[1];
+        int kk = (AMREX_SPACEDIM>2)? k*ratio[2] : 0;
+
+        // 1D flattening
+        int nc, ixf, iyf;
+        for (int iy = 0; iy < sd_order; ++iy) {
+            for (int ix = 0; ix < sd_order; ++ix) {
+                // within a big coarse cell
+                for (int joff = 0; joff < ratio[1]; ++joff) {
+                    for (int ioff = 0; ioff < ratio[0]; ++ioff) {
+                        nc = box2point(ix, iy, 0, n);
+                        ixf = ix + ioff*sd_order; // begin from 0
+                        iyf = iy + joff*sd_order; // begin from 0
+                        int kf = fsd_order*ixf + iyf;
+                        uf[kf] = finearr(ii+ioff,jj+joff,kk,nc);
+                    }
+                }
+            }
+        }
+
+        // fine-to-coarse rojection
+        for (int ix = 0; ix < sd_space; ++ix) {
+            for (int iy = 0; iy < fsd_space; ++iy) {
+                uc[ix] += P2D[ix][iy]*uf[iy];
+            }
+        }
+
+        // Unflattening
+        for (int iy = 0; iy < sd_order; ++iy) {
+            for (int ix = 0; ix < sd_order; ++ix) {
+                int kc = sd_order*ix + iy;
+                nc = box2point(ix, iy, 0, n);
+                crsearr(i,j,k,nc) = uc[kc];
             }
         }
         return;

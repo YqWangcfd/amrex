@@ -191,9 +191,11 @@ public:
      * \param fbc       filling physical boundary on fine level
      * \param bcs       physical BC types
      */
+
     template <typename BC>
-    void fillRK (int stage, int iteration, int ncycle, MF& mf, Real time,
-                 BC& cbc, BC& fbc, Vector<BCRec> const& bcs);
+    void fillRK (int stage, int iteration, int ncycle,
+                 MF& mf, Real time, BC& cbc, 
+                 Vector<BCRec> const& bcs);
 
     template <typename BC>
     void hybridfillRK (int stage, int iteration, int ncycle,
@@ -444,7 +446,7 @@ void FillPatcher<MF>::storeRKCoarseData (Real /*time*/, Real dt, MF const& S_old
 template <typename MF>
 template <typename BC>
 void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
-                              MF& mf, Real time, BC& cbc, BC& fbc,
+                              MF& mf, Real time, BC& cbc, 
                               Vector<BCRec> const& bcs)
 {
     BL_PROFILE("FillPatcher::fillRK()");
@@ -461,8 +463,11 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
             (detail::make_mf_crse_patch<MF>(fpc, m_ncomp));
     }
 
-    // amrex::Print() << "m_cf_crse_data_tmp->boxArray()= " 
-    //                << m_cf_crse_data_tmp->boxArray() << std::endl;
+    amrex::Print() << "m_cf_crse_data_tmp->boxArray()= " 
+                   << m_cf_crse_data_tmp->boxArray() << std::endl;
+    amrex::Print() << "m_cf_crse_data_tmp DistributionMapping: " 
+                   << m_cf_crse_data_tmp->DistributionMap() << std::endl;
+
 
     auto const& u = m_cf_crse_data_tmp->arrays();
     auto const& u0 = m_cf_crse_data[0].second->const_arrays();
@@ -615,23 +620,23 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
 
     cbc(*m_cf_crse_data_tmp, 0, m_ncomp, m_cf_crse_data_tmp->nGrowVect(), time, 0); // m_cf_crse_data_tmp->nGrowVect() = 0, m_gnhost=6
 
+    mf.ParallelCopy(*m_cf_crse_data_tmp, 0, 0, m_ncomp, IntVect(0), IntVect(0));
+    // if (m_cf_fine_data == nullptr) {
+    //     m_cf_fine_data = std::make_unique<MF>(detail::make_mf_fine_patch<MF>(fpc, m_ncomp));
+    // }
 
-    if (m_cf_fine_data == nullptr) {
-        m_cf_fine_data = std::make_unique<MF>(detail::make_mf_fine_patch<MF>(fpc, m_ncomp));
-    }
+    // FillPatchInterp(*m_cf_fine_data, 0, *m_cf_crse_data_tmp, 0,
+    //                 m_ncomp, IntVect(0), m_cgeom, m_fgeom,
+    //                 amrex::grow(amrex::convert(m_fgeom.Domain(),
+    //                                            mf.ixType()),m_nghost),
+    //                 m_ratio, m_interp, bcs, 0);
 
-    FillPatchInterp(*m_cf_fine_data, 0, *m_cf_crse_data_tmp, 0,
-                    m_ncomp, IntVect(0), m_cgeom, m_fgeom,
-                    amrex::grow(amrex::convert(m_fgeom.Domain(),
-                                               mf.ixType()),m_nghost),
-                    m_ratio, m_interp, bcs, 0);
+    // // xxxxx We can optimize away this ParallelCopy by making a special fpinfo.
+    // mf.ParallelCopy(*m_cf_fine_data, 0, 0, m_ncomp, IntVect(0), m_nghost);
 
-    // xxxxx We can optimize away this ParallelCopy by making a special fpinfo.
-    mf.ParallelCopy(*m_cf_fine_data, 0, 0, m_ncomp, IntVect(0), m_nghost);
+    // mf.FillBoundary(m_fgeom.periodicity());
 
-    mf.FillBoundary(m_fgeom.periodicity());
-
-    fbc(mf, 0, m_ncomp, m_nghost, time, 0);
+    // fbc(mf, 0, m_ncomp, m_nghost, time, 0);
 }
 
 template <typename MF>

@@ -463,12 +463,6 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
             (detail::make_mf_crse_patch<MF>(fpc, m_ncomp));
     }
 
-    amrex::Print() << "m_cf_crse_data_tmp->boxArray()= " 
-                   << m_cf_crse_data_tmp->boxArray() << std::endl;
-    amrex::Print() << "m_cf_crse_data_tmp DistributionMapping: " 
-                   << m_cf_crse_data_tmp->DistributionMap() << std::endl;
-
-
     auto const& u = m_cf_crse_data_tmp->arrays();
     auto const& u0 = m_cf_crse_data[0].second->const_arrays();
     auto const& k1 = m_cf_crse_data[1].second->const_arrays();
@@ -497,7 +491,6 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
         constexpr Real d2 = Real(1./3.);
         constexpr Real d3 = Real(4./3.);
         if (stage == 1) {
-            // amrex::Print() << "dtc= " << dtc << std::endl;
             amrex::ParallelFor(*m_cf_crse_data_tmp, IntVect(0), m_ncomp,
             [=] AMREX_GPU_DEVICE (int bi, int i, int j, int k, int n) noexcept
             {
@@ -509,6 +502,7 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                     u[bi](i,j,k,n) = u0[bi](i,j,k,n) + dtc*uu;
                 }
             });
+            
         } else if (stage == 2) {
             // amrex::Print() << "fillRK: stage-2" << std::endl;
             amrex::ParallelFor(*m_cf_crse_data_tmp, IntVect(0), m_ncomp,
@@ -521,10 +515,10 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                     Real uu = b1*kk1 + b2*kk2 + b3*kk3;
                     Real ut = c1*kk1 + c2*kk2 + c3*kk3;
                     u[bi](i,j,k,n) = u0[bi](i,j,k,n) + dtc*(uu + r*ut);
+
                 }
             });
         } else if (stage == 3) {
-            // amrex::Print() << "fillRK: stage-3" << std::endl;
             amrex::ParallelFor(*m_cf_crse_data_tmp, IntVect(0), m_ncomp,
             [=] AMREX_GPU_DEVICE (int bi, int i, int j, int k, int n) noexcept
             {
@@ -536,7 +530,7 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                     Real ut  = c1*kk1 + c2*kk2 + c3*kk3;
                     Real utt = d1*kk1 + d2*kk2 + d3*kk3;
                     u[bi](i,j,k,n) = u0[bi](i,j,k,n) + dtc*
-                        (uu + Real(0.5)*r*ut + Real(0.25)*r*r*utt);
+                        (uu + Real(0.5)*r*ut + Real(0.25)*r*r*utt);                    
                 }
             });
         }
@@ -621,22 +615,7 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
     cbc(*m_cf_crse_data_tmp, 0, m_ncomp, m_cf_crse_data_tmp->nGrowVect(), time, 0); // m_cf_crse_data_tmp->nGrowVect() = 0, m_gnhost=6
 
     mf.ParallelCopy(*m_cf_crse_data_tmp, 0, 0, m_ncomp, IntVect(0), IntVect(0));
-    // if (m_cf_fine_data == nullptr) {
-    //     m_cf_fine_data = std::make_unique<MF>(detail::make_mf_fine_patch<MF>(fpc, m_ncomp));
-    // }
-
-    // FillPatchInterp(*m_cf_fine_data, 0, *m_cf_crse_data_tmp, 0,
-    //                 m_ncomp, IntVect(0), m_cgeom, m_fgeom,
-    //                 amrex::grow(amrex::convert(m_fgeom.Domain(),
-    //                                            mf.ixType()),m_nghost),
-    //                 m_ratio, m_interp, bcs, 0);
-
-    // // xxxxx We can optimize away this ParallelCopy by making a special fpinfo.
-    // mf.ParallelCopy(*m_cf_fine_data, 0, 0, m_ncomp, IntVect(0), m_nghost);
-
-    // mf.FillBoundary(m_fgeom.periodicity());
-
-    // fbc(mf, 0, m_ncomp, m_nghost, time, 0);
+  
 }
 
 template <typename MF>

@@ -2125,13 +2125,12 @@ Mortar2D::mortar_restrict(const int i, const int j, const int k, const int n,
         int jj = j*ratio[1];
         int kk = (AMREX_SPACEDIM>2)? k*ratio[2] : 0;
 
-        int nc;
-        for (int s = 0; s < sd_order; ++s) {
-            for (int m = 0; m < sd_order; ++m) {
-                // 2D 5*5 fine state
-                for (int ioff = 0; ioff < ratio[0]; ++ioff) {
-                    for (int joff = 0; joff < ratio[1]; ++joff) {
-                        nc = box2point(s, m, 0, n);
+        for (int ioff = 0; ioff < ratio[0]; ++ioff) {
+            for (int joff = 0; joff < ratio[1]; ++joff) {
+                // 5*5 fine state
+                for (int s = 0; s < sd_order; ++s) {
+                    for (int m = 0; m < sd_order; ++m) {
+                        int nc = box2point(s, m, 0, n);
                         uf[ioff][joff][s][m] = finearr(ii+ioff,jj+joff,kk,nc);
                     }
                 }
@@ -2163,7 +2162,7 @@ Mortar2D::mortar_restrict(const int i, const int j, const int k, const int n,
                         }
                     }
                 }
-                nc = box2point(s, m, 0, n);
+                int nc = box2point(s, m, 0, n);
                 crsearr(i,j,k,nc) = uc[s][m];
             }
         }

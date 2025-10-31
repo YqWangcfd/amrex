@@ -613,8 +613,8 @@ namespace detail {
                                                                           cgeom,
                                                                           index_space);
 
-                amrex::Print() << "fpc.ba_crse_patch=" << fpc.ba_crse_patch
-                                << "fpc.ba_fine_patch=" << fpc.ba_fine_patch << std::endl;
+                // amrex::Print() << "fpc.ba_crse_patch=" << fpc.ba_crse_patch
+                //                 << "fpc.ba_fine_patch=" << fpc.ba_fine_patch << std::endl;
 
                 if ( ! fpc.ba_crse_patch.empty())
                 {

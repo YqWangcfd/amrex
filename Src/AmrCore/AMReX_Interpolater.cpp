@@ -1882,7 +1882,7 @@ Mortar2D::interp (const FArrayBox& crse,
 
     Box target_fine_region = fine_region & fine.box();
 
-    amrex::Print() << "target_fine_region=" << target_fine_region   << std::endl;
+    // amrex::Print() << "target_fine_region=" << target_fine_region   << std::endl;
 
     bool run_on_gpu = (runon == RunOn::Gpu && Gpu::inLaunchRegion());
     amrex::ignore_unused(run_on_gpu);
@@ -1957,7 +1957,6 @@ Mortar2D::mortar_interp(const int i, const int j, const int k, const int n,
             }
         }
         
-        // amrex::Abort("Please pass Type::ScaleRef onto the mapper instead of using the Type::OrderRef!");
         return;
     } else if (Mortar2D::type == Type::ScaleRef)
     {

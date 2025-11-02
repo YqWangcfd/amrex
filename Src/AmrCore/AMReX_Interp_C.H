@@ -526,8 +526,8 @@ void cell_quartic_restrict_x (int i, int j, int k, int n, Array4<Real> const& cr
                                       Real(0.598144531250000), Real(-0.119628906250000),
                                       Real(0.023925781250000), Real(-0.002441406250000)}; // 8-point, centered stencil
 
-    int small_end = crse.begin.x;
-    int big_end   = crse.end.x - 1;
+    int small_end = lbound(crse).x;
+    int big_end   = ubound(crse).x;
     if (i > small_end && i < big_end) {
         int ii = i*2;
         // 8-point centered
@@ -594,7 +594,7 @@ void cell_quartic_restrict_y (int i, int j, int k, int n, Array4<Real> const& cr
                                        Real(-0.8203125), Real(0.4921875),
                                        Real(-0.17578125), Real(0.02734375)};   // 6-point stencil    
 
-    int small_end = crse.begin.y, big_end = crse.end.y - 1;
+    int small_end = lbound(crse).y, big_end = ubound(crse).y;
     if (j > small_end && j < big_end) {
         int jj = j*2;
         crse(i,j,k,n) = c(-2)*fine(i,jj-2,k,n)
@@ -638,7 +638,7 @@ void cell_quartic_restrict_z (int i, int j, int k, int n, Array4<Real> const& cr
                                         Real(-0.8203125), Real(0.4921875),
                                         Real(-0.17578125), Real(0.02734375)};   // 6-point stencil    
 
-    int small_end = crse.begin.z, big_end = crse.end.z - 1;
+    int small_end = lbound(crse).z, big_end = ubound(crse).z;
     if (k > small_end && k < big_end) {
         int kk = k*2;
         crse(i,j,k,n) = c(-2)*fine(i,j,kk-2,n)
@@ -1340,7 +1340,7 @@ AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void weno_restrict_x (int i, int j, int k, int n, Array4<Real> const& crse,
                       Array4<Real const> const& fine, IntVect const& ratio) noexcept
 {
-    int small_end = crse.begin.x, big_end = crse.end.x-1;
+    int small_end = lbound(crse).x, big_end = ubound(crse).x;
     int ii = i*ratio[0];
     if (ratio[0] == 2) {
         if (i > small_end && i < big_end) {
@@ -1385,7 +1385,7 @@ AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void weno_restrict_y (int i, int j, int k, int n, Array4<Real> const& crse,
                       Array4<Real const> const& fine, IntVect const& ratio) noexcept
 {
-    int small_end = crse.begin.y, big_end = crse.end.y-1;
+    int small_end = lbound(crse).y, big_end = ubound(crse).y;
     int jj = j*ratio[1];
     if (ratio[1] == 2) {
         if (j > small_end && j < big_end) {
@@ -1430,7 +1430,7 @@ AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void weno_restrict_z (int i, int j, int k, int n, Array4<Real> const& crse,
                       Array4<Real const> const& fine, IntVect const& ratio) noexcept
 {
-    int small_end = crse.begin.z, big_end = crse.end.z-1;
+    int small_end = lbound(crse).z, big_end = ubound(crse).z;
     int kk = k*ratio[2];
     if (ratio[2] == 2) {
         if (k > small_end && k < big_end) {

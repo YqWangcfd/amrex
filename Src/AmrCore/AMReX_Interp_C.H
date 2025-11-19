@@ -947,8 +947,52 @@ namespace {
 }
 
 
-// Using the same stencil points: 5-point WENO interpolation
-// Unified WENO interpolation function supporting both ratio=2 and ratio=4
+// // Using the same stencil points: 5-point WENO interpolation
+// // Unified JS-type WENO interpolation function supporting both ratio=2 and ratio=4
+// AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+// void WENO_Interp_Unified(const amrex::Real& v1, const amrex::Real& v2, 
+//                          const amrex::Real& v3, const amrex::Real& v4, const amrex::Real& v5, 
+//                          int ratio_idx, int subcell_idx, amrex::Real& v_edge)
+// {
+//     using namespace amrex;
+    
+//     // Compute smoothness indicators using constant memory coefficients
+//     Real beta[3];
+//     Real tvals[5] = {v1, v2, v3, v4, v5};
+    
+//     for (int k = 0; k < 3; ++k) {
+//         const Real* coeffs = weno_beta_coeffs[k];
+//         Real vals[3] = {tvals[k], tvals[k+1], tvals[k+2]}; // Center values for beta calculation
+//         beta[k] = coeffs[0]*vals[0]*vals[2] + coeffs[1]*vals[0]*vals[1] + coeffs[2]*vals[1]*vals[2] +
+//                   coeffs[3]*vals[0]*vals[0] + coeffs[4]*vals[1]*vals[1] + coeffs[5]*vals[2]*vals[2];
+//     }
+    
+//     // Small value for computing non-linear weights
+//     constexpr Real eps = 1.0e-6;
+    
+//     // Compute alpha values and normalize
+//     Real alpha[3], sum_alpha = 0.0;
+//     for (int k = 0; k < 3; ++k) {
+//         alpha[k] = weno_linear_weights[ratio_idx][subcell_idx][k] / ((eps + beta[k]) * (eps + beta[k]));
+//         sum_alpha += alpha[k];
+//     }
+    
+//     // Compute candidate stencils and final result
+//     Real result = 0.0;
+    
+//     for (int k = 0; k < 3; ++k) {
+//         Real omega = alpha[k] / sum_alpha;
+//         Real q = 0.0;
+//         for (int j = 0; j < 3; ++j) {
+//             q += weno_stencil_coeffs[ratio_idx][subcell_idx][k][j] * tvals[k + j];
+//         }
+//         result += omega * q;
+//     }
+    
+//     v_edge = result;
+// }
+
+// Unified UOHO Z-type WENO interpolation function supporting both ratio=2 and ratio=4
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void WENO_Interp_Unified(const amrex::Real& v1, const amrex::Real& v2, 
                          const amrex::Real& v3, const amrex::Real& v4, const amrex::Real& v5, 
@@ -967,18 +1011,25 @@ void WENO_Interp_Unified(const amrex::Real& v1, const amrex::Real& v2,
                   coeffs[3]*vals[0]*vals[0] + coeffs[4]*vals[1]*vals[1] + coeffs[5]*vals[2]*vals[2];
     }
     
+    // WENO-Z global smoothness indicator
+    Real tau = std::abs(beta[0] - beta[2]);
+
     // Small value for computing non-linear weights
-    constexpr Real eps = 1.0e-6;
-    
+    constexpr Real eps = 1.0e-40;
+
+    // WCNS-ZU2
+    constexpr Real p1 = 2.5;
+    constexpr Real p2 = 2.0;
+
     // Compute alpha values and normalize
     Real alpha[3], sum_alpha = 0.0;
     for (int k = 0; k < 3; ++k) {
-        alpha[k] = weno_linear_weights[ratio_idx][subcell_idx][k] / ((eps + beta[k]) * (eps + beta[k]));
+        alpha[k] = weno_linear_weights[ratio_idx][subcell_idx][k] * (1.0 + pow(tau, p1)/pow(beta[k]+eps, p2));
         sum_alpha += alpha[k];
     }
     
     // Compute candidate stencils and final result
-    Real result = 0.0;
+    v_edge = 0.0;
     
     for (int k = 0; k < 3; ++k) {
         Real omega = alpha[k] / sum_alpha;
@@ -986,10 +1037,8 @@ void WENO_Interp_Unified(const amrex::Real& v1, const amrex::Real& v2,
         for (int j = 0; j < 3; ++j) {
             q += weno_stencil_coeffs[ratio_idx][subcell_idx][k][j] * tvals[k + j];
         }
-        result += omega * q;
+        v_edge += omega * q;
     }
-    
-    v_edge = result;
 }
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
@@ -1282,7 +1331,61 @@ namespace {
 #endif
 }
 
-// Unified WENO restriction function supporting both ratio=2 and ratio=4
+// // Unified JS-type WENO restriction function supporting both ratio=2 and ratio=4
+// AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+// void WENO_Restrict_Unified(const amrex::Real& v0, const amrex::Real& v1, const amrex::Real& v2, 
+//                            const amrex::Real& v3, const amrex::Real& v4, const amrex::Real& v5, 
+//                            int ratio_idx, bool use_eno, bool is_boundary, amrex::Real& v_edge)
+// {
+//     using namespace amrex;
+    
+//     if (is_boundary && use_eno) {
+//         // Simple 2nd-order Lagrange interpolation for boundary
+//         const Real* coeffs = eno_restrict_coeffs[ratio_idx];
+//         v_edge = coeffs[0]*v0 + coeffs[1]*v1 + coeffs[2]*v2 + coeffs[3]*v3;
+//         return;
+//     }
+
+//     // WENO reconstruction
+//     Real vals[6] = {v0, v1, v2, v3, v4, v5};
+        
+//     // Select appropriate linear weights based on use_eno
+//     int pos_idx = is_boundary ? 1 : 0;
+
+//     // Compute smoothness indicators using the same beta coefficients as in WENO_Interp_Unified
+//     Real beta[4];
+//     for (int k = 0; k < 4; ++k) {
+//         const Real* coeffs = weno_restrict_beta_coeffs[pos_idx][k];
+//         Real v[3] = {vals[k], vals[k+1], vals[k+2]};
+//         beta[k] = coeffs[0]*v[0]*v[2] + coeffs[1]*v[0]*v[1] + coeffs[2]*v[1]*v[2] +
+//                   coeffs[3]*v[0]*v[0] + coeffs[4]*v[1]*v[1] + coeffs[5]*v[2]*v[2];
+//     }
+    
+//     // Small value for computing non-linear weights
+//     constexpr Real eps = 1.0e-6;
+
+//     // Compute alpha values and normalize
+//     Real alpha[4], sum_alpha = 0.0;
+//     for (int k = 0; k < 4; ++k) {
+//         alpha[k] = weno_restrict_linear_weights[ratio_idx][pos_idx][k] / ((eps + beta[k]) * (eps + beta[k]));
+//         sum_alpha += alpha[k];
+//     }
+    
+//     // Compute candidate stencils and final result
+//     Real result = 0.0;
+//     for (int k = 0; k < 4; ++k) {
+//         Real omega = alpha[k] / sum_alpha;
+//         Real q = 0.0;
+//         for (int j = 0; j < 3; ++j) {
+//             q += weno_restrict_stencil_coeffs[ratio_idx][pos_idx][k][j] * vals[k + j];
+//         }
+//         result += omega * q;
+//     }
+    
+//     v_edge = result;
+// }
+
+// Unified ZU2-type WENO restriction function supporting both ratio=2 and ratio=4
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
 void WENO_Restrict_Unified(const amrex::Real& v0, const amrex::Real& v1, const amrex::Real& v2, 
                            const amrex::Real& v3, const amrex::Real& v4, const amrex::Real& v5, 
@@ -1313,27 +1416,29 @@ void WENO_Restrict_Unified(const amrex::Real& v0, const amrex::Real& v1, const a
     }
     
     // Small value for computing non-linear weights
-    constexpr Real eps = 1.0e-6;
+    constexpr Real eps = 1.0e-40;
+
+    // WCNS-ZU2
+    constexpr Real p1 = 2.5;
+    constexpr Real p2 = 2.0;
 
     // Compute alpha values and normalize
     Real alpha[4], sum_alpha = 0.0;
     for (int k = 0; k < 4; ++k) {
-        alpha[k] = weno_restrict_linear_weights[ratio_idx][pos_idx][k] / ((eps + beta[k]) * (eps + beta[k]));
+        alpha[k] = weno_restrict_linear_weights[ratio_idx][pos_idx][k] * (1.0 + pow(tau, p1)/pow(beta[k]+eps, p2));
         sum_alpha += alpha[k];
     }
     
     // Compute candidate stencils and final result
-    Real result = 0.0;
+    v_edge = 0.0;
     for (int k = 0; k < 4; ++k) {
         Real omega = alpha[k] / sum_alpha;
         Real q = 0.0;
         for (int j = 0; j < 3; ++j) {
             q += weno_restrict_stencil_coeffs[ratio_idx][pos_idx][k][j] * vals[k + j];
         }
-        result += omega * q;
+        v_edge += omega * q;
     }
-    
-    v_edge = result;
 }
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE

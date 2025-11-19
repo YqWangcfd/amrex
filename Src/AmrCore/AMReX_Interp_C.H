@@ -1024,7 +1024,7 @@ void WENO_Interp_Unified(const amrex::Real& v1, const amrex::Real& v2,
     // Compute alpha values and normalize
     Real alpha[3], sum_alpha = 0.0;
     for (int k = 0; k < 3; ++k) {
-        alpha[k] = weno_linear_weights[ratio_idx][subcell_idx][k] * (1.0 + pow(tau, p1)/pow(beta[k]+eps, p2));
+        alpha[k] = weno_linear_weights[ratio_idx][subcell_idx][k] * (1.0 + std::pow(tau, p1)/std::pow(beta[k]+eps, p2));
         sum_alpha += alpha[k];
     }
     
@@ -1414,6 +1414,9 @@ void WENO_Restrict_Unified(const amrex::Real& v0, const amrex::Real& v1, const a
         beta[k] = coeffs[0]*v[0]*v[2] + coeffs[1]*v[0]*v[1] + coeffs[2]*v[1]*v[2] +
                   coeffs[3]*v[0]*v[0] + coeffs[4]*v[1]*v[1] + coeffs[5]*v[2]*v[2];
     }
+
+    // WENO-Z global smoothness indicator
+    Real tau = std::abs(beta[0] - beta[3]);
     
     // Small value for computing non-linear weights
     constexpr Real eps = 1.0e-40;
@@ -1425,7 +1428,7 @@ void WENO_Restrict_Unified(const amrex::Real& v0, const amrex::Real& v1, const a
     // Compute alpha values and normalize
     Real alpha[4], sum_alpha = 0.0;
     for (int k = 0; k < 4; ++k) {
-        alpha[k] = weno_restrict_linear_weights[ratio_idx][pos_idx][k] * (1.0 + pow(tau, p1)/pow(beta[k]+eps, p2));
+        alpha[k] = weno_restrict_linear_weights[ratio_idx][pos_idx][k] * (1.0 + std::pow(tau, p1)/std::pow(beta[k]+eps, p2));
         sum_alpha += alpha[k];
     }
     

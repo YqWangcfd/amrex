@@ -1633,18 +1633,18 @@ CellWENO::CoarseBox (const Box& fine, int ratio)
 
 void
 CellWENO::interp (const FArrayBox& crse,
-                     int              crse_comp,
-                     FArrayBox&       fine,
-                     int              fine_comp,
-                     int              ncomp,
-                     const Box&       fine_region,
-                     const IntVect&   ratio,
-                     const Geometry&  /*crse_geom*/,
-                     const Geometry&  /*fine_geom*/,
-                     Vector<BCRec> const&  /*bcr*/,
-                     int              /* actual_comp */,
-                     int              /* actual_state */,
-                     RunOn            runon)
+                  int              crse_comp,
+                  FArrayBox&       fine,
+                  int              fine_comp,
+                  int              ncomp,
+                  const Box&       fine_region,
+                  const IntVect&   ratio,
+                  const Geometry&  /*crse_geom*/,
+                  const Geometry&  /*fine_geom*/,
+                  Vector<BCRec> const&  /*bcr*/,
+                  int              /* actual_comp */,
+                  int              /* actual_state */,
+                  RunOn            runon)
 {
     BL_PROFILE("CellWENO::interp()");
 
@@ -1670,17 +1670,12 @@ CellWENO::interp (const FArrayBox& crse,
     Array4<Real> const& tmpzarr = tmpz.array();
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, bz, ncomp, i, j, k, n,
     {
-        central_weno_interp_z(i,j,k,n,tmpzarr,crsearr,ratio);
-// #ifdef USE_FUEGO_EOS
-//         // facilitate robustness
-//         Real rhomin = 1e-10;
-//         Real Tmin = 1e-10;
-//         tmpzarr(i,j,k,MRHO) = amrex::max(tmpzarr(i,j,k,MRHO), rhomin);
-//         for (int n = 0; n < NSP; ++n) {
-//             tmpzarr(i,j,k,n) = amrex::max(tmpzarr(i,j,k,n),Real(0.0));  
-//         }
-//         tmpzarr(i,j,k,MT) = amrex::max(tmpzarr(i,j,k,MT), Tmin);
-// #endif
+        central_weno_interp_z(i,j,k,n,tmpzarr,crsearr,ratio);        
+    });
+    // positivity-preserving
+    AMREX_HOST_DEVICE_PARALLEL_FOR_3D_FLAG(runon, bz, i, j, k, 
+    {
+        pp_weno(i,j,k,tmpzarr,crsearr,ncomp,ratio);
     });
 #endif
 
@@ -1702,16 +1697,11 @@ CellWENO::interp (const FArrayBox& crse,
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, ncomp, i, j, k, n,
     {
         central_weno_interp_y(i,j,k,n,tmpyarr,srcarr,ratio);
-// #ifdef USE_FUEGO_EOS
-//         // facilitate robustness
-//         Real rhomin = 1e-10;
-//         Real Tmin = 1e-10;
-//         tmpyarr(i,j,k,MRHO) = amrex::max(tmpyarr(i,j,k,MRHO), rhomin);
-//         for (int n = 0; n < NSP; ++n) {
-//             tmpyarr(i,j,k,n) = amrex::max(tmpyarr(i,j,k,n),Real(0.0));  
-//         }
-//         tmpyarr(i,j,k,MT) = amrex::max(tmpyarr(i,j,k,MT), Tmin);
-// #endif
+    });
+    // positivity-preserving
+    AMREX_HOST_DEVICE_PARALLEL_FOR_3D_FLAG(runon, by, i, j, k, 
+    {
+        pp_weno(i,j,k,tmpyarr,srcarr,ncomp,ratio);
     });
 #endif
 
@@ -1724,17 +1714,12 @@ CellWENO::interp (const FArrayBox& crse,
                                            i, j, k, n,
     {
         central_weno_interp_x(i,j,k,n,finearr,srcarr,ratio);
-// #ifdef USE_FUEGO_EOS
-//         // facilitate robustness
-//         Real rhomin = 1e-10;
-//         Real Tmin = 1e-10;
-//         finearr(i,j,k,MRHO) = amrex::max(finearr(i,j,k,MRHO), rhomin);
-//         for (int n = 0; n < NSP; ++n) {
-//             finearr(i,j,k,n) = amrex::max(finearr(i,j,k,n),Real(0.0));  
-//         }
-//         finearr(i,j,k,MT) = amrex::max(finearr(i,j,k,MT), Tmin);
-// #endif
-   });
+    });
+    // positivity-preserving
+    AMREX_HOST_DEVICE_PARALLEL_FOR_3D_FLAG(runon, target_fine_region, i, j, k, 
+    {
+        pp_weno(i,j,k,finearr,srcarr,ncomp,ratio);
+    });
 }
 
 

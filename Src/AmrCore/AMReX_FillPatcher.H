@@ -502,6 +502,19 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                     Real kk3 = k3[bi](i,j,k,n);
                     Real uu  = b1*kk1 + b2*kk2 + b3*kk3;
                     u[bi](i,j,k,n) = u0[bi](i,j,k,n) + dtc*uu;
+                    // positivity-preserving
+                    // if (n >= 0 && n <= m_ncomp-6) {  // MRHO = NEQ - 6
+                    //     u[bi](i,j,k,n) = amrex::max(u[bi](i,j,k,n), Real(0.0));
+                    //     if (n == m_ncomp-6) u[bi](i,j,k,n) = amrex::max(u[bi](i,j,k,n), Real(1.0e-31));
+                    // }
+                    if (n >= 0 && n <= 10) {
+                        Real val = u[bi](i,j,k,n);
+                        if (val < Real(0.0)) {
+                           AMREX_DEVICE_PRINTF("❌ NEGATIVE in RK Stage 1: comp=%d, cell=(%d,%d,%d), val=%.6e\n",
+                                               n, i, j, k, val);
+                           amrex::Abort("FillPatcher: positivity-preserving failed at Stage 1");
+                        }
+                    }
                 }
             });
         } else if (stage == 2) {
@@ -516,6 +529,19 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                     Real uu = b1*kk1 + b2*kk2 + b3*kk3;
                     Real ut = c1*kk1 + c2*kk2 + c3*kk3;
                     u[bi](i,j,k,n) = u0[bi](i,j,k,n) + dtc*(uu + r*ut);
+                    // positivity-preserving
+                    // if (n >= 0 && n <= m_ncomp-6) {  // MRHO = NEQ - 6
+                    //     u[bi](i,j,k,n) = amrex::max(u[bi](i,j,k,n), Real(0.0));
+                    //     if (n == m_ncomp-6) u[bi](i,j,k,n) = amrex::max(u[bi](i,j,k,n), Real(1.0e-31));
+                    // }
+                    if (n >= 0 && n <= 10) {
+                        Real val = u[bi](i,j,k,n);
+                        if (val < Real(0.0)) {
+                           AMREX_DEVICE_PRINTF("❌ NEGATIVE in RK Stage 2: comp=%d, cell=(%d,%d,%d), val=%.6e\n",
+                                               n, i, j, k, val);
+                           amrex::Abort("FillPatcher: positivity-preserving failed at Stage 2");
+                        }
+                    }
                 }
             });
         } else if (stage == 3) {
@@ -532,6 +558,19 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                     Real utt = d1*kk1 + d2*kk2 + d3*kk3;
                     u[bi](i,j,k,n) = u0[bi](i,j,k,n) + dtc*
                         (uu + Real(0.5)*r*ut + Real(0.25)*r*r*utt);
+                    // positivity-preserving
+                    // if (n >= 0 && n <= m_ncomp-6) {  // MRHO = NEQ - 6
+                    //     u[bi](i,j,k,n) = amrex::max(u[bi](i,j,k,n), Real(0.0));
+                    //     if (n == m_ncomp-6) u[bi](i,j,k,n) = amrex::max(u[bi](i,j,k,n), Real(1.0e-31));
+                    // }
+                    if (n >= 0 && n <= 10) {
+                        Real val = u[bi](i,j,k,n);
+                        if (val < Real(0.0)) {
+                           AMREX_DEVICE_PRINTF("❌ NEGATIVE in RK Stage 3: comp=%d, cell=(%d,%d,%d), val=%.6e\n",
+                                               n, i, j, k, val);
+                           amrex::Abort("FillPatcher: positivity-preserving failed at Stage 3");
+                        }
+                    }
                 }
             });
         }

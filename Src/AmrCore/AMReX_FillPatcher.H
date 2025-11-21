@@ -507,7 +507,7 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                     //     u[bi](i,j,k,n) = amrex::max(u[bi](i,j,k,n), Real(0.0));
                     //     if (n == m_ncomp-6) u[bi](i,j,k,n) = amrex::max(u[bi](i,j,k,n), Real(1.0e-31));
                     // }
-                    if (n >= 0 && n <= 10) {
+                    if (n >= 10 && n <= 10) {
                         Real val = u[bi](i,j,k,n);
                         if (val < Real(0.0)) {
                            AMREX_DEVICE_PRINTF("❌ NEGATIVE in RK Stage 1: comp=%d, cell=(%d,%d,%d), val=%.6e\n",
@@ -534,7 +534,7 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                     //     u[bi](i,j,k,n) = amrex::max(u[bi](i,j,k,n), Real(0.0));
                     //     if (n == m_ncomp-6) u[bi](i,j,k,n) = amrex::max(u[bi](i,j,k,n), Real(1.0e-31));
                     // }
-                    if (n >= 0 && n <= 10) {
+                    if (n >= 10 && n <= 10) {
                         Real val = u[bi](i,j,k,n);
                         if (val < Real(0.0)) {
                            AMREX_DEVICE_PRINTF("❌ NEGATIVE in RK Stage 2: comp=%d, cell=(%d,%d,%d), val=%.6e\n",
@@ -563,7 +563,7 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                     //     u[bi](i,j,k,n) = amrex::max(u[bi](i,j,k,n), Real(0.0));
                     //     if (n == m_ncomp-6) u[bi](i,j,k,n) = amrex::max(u[bi](i,j,k,n), Real(1.0e-31));
                     // }
-                    if (n >= 0 && n <= 10) {
+                    if (n >= 10 && n <= 10) {
                         Real val = u[bi](i,j,k,n);
                         if (val < Real(0.0)) {
                            AMREX_DEVICE_PRINTF("❌ NEGATIVE in RK Stage 3: comp=%d, cell=(%d,%d,%d), val=%.6e\n",

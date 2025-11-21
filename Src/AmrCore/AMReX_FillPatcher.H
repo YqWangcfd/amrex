@@ -443,10 +443,10 @@ void FillPatcher<MF>::storeRKCoarseData (Real /*time*/, Real dt, MF const& S_old
 
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-static void pp_weno (int i, int j, int k,  
-                    Array4<Real> const& fine,
-                    Array4<Real const> const& crse,
-                    int ncomp) noexcept
+void pp_weno (int i, int j, int k,  
+            Array4<Real> const& fine,
+            Array4<Real const> const& crse,
+            int ncomp) noexcept
 {
     using amrex::Real;
     const int NSP = 10;
@@ -577,18 +577,37 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                     Real uu  = b1*kk1 + b2*kk2 + b3*kk3;
                     u[bi](i,j,k,n) = u0[bi](i,j,k,n) + dtc*uu;
 
+                    // // positivity-preserving
+                    // pp_weno(i, j, k, u[bi], u0[bi], m_ncomp);
+
+                    // // negative density checking
+                    // bool rho_negative = false;
+                    // if (n >= 10 && n <= 10) {
+                    //     Real val = u[bi](i,j,k,n);
+                    //     if (val < Real(0.0)) {
+                    //         rho_negative = true;
+                    //        AMREX_DEVICE_PRINTF("❌ NEGATIVE in RK Stage 1: comp=%d, cell=(%d,%d,%d), val=%.6e\n",
+                    //                            n, i, j, k, val);
+                    //     }
+                    // }
+                    // if (rho_negative) amrex::Abort("FillPatcher: positivity-preserving failed at Stage 1");
+                }
+            });
+
+            amrex::ParallelFor(*m_cf_crse_data_tmp, IntVect(0),
+            [=] AMREX_GPU_DEVICE (int bi, int i, int j, int k) noexcept
+            {
+                if (cdomain.contains(i,j,k)) {
                     // positivity-preserving
                     pp_weno(i, j, k, u[bi], u0[bi], m_ncomp);
 
                     // negative density checking
-                    Bool rho_negative = false;
-                    if (n >= 10 && n <= 10) {
-                        Real val = u[bi](i,j,k,n);
-                        if (val < Real(0.0)) {
-                            rho_negative = true;
-                           AMREX_DEVICE_PRINTF("❌ NEGATIVE in RK Stage 1: comp=%d, cell=(%d,%d,%d), val=%.6e\n",
-                                               n, i, j, k, val);
-                        }
+                    bool rho_negative = false;
+                    Real val = u[bi](i,j,k,10);
+                    if (val < Real(0.0)) {
+                        rho_negative = true;
+                        AMREX_DEVICE_PRINTF("❌ NEGATIVE in RK Stage 1: comp=%d, cell=(%d,%d,%d), val=%.6e\n",
+                                            10, i, j, k, val);
                     }
                     if (rho_negative) amrex::Abort("FillPatcher: positivity-preserving failed at Stage 1");
                 }
@@ -606,17 +625,37 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                     Real ut = c1*kk1 + c2*kk2 + c3*kk3;
                     u[bi](i,j,k,n) = u0[bi](i,j,k,n) + dtc*(uu + r*ut);
                     
+                    // // positivity-preserving
+                    // pp_weno(i, j, k, u[bi], u0[bi], m_ncomp);
+
+                    // // negative density checking
+                    // bool rho_negative = false;
+                    // if (n >= 10 && n <= 10) {
+                    //     Real val = u[bi](i,j,k,n);
+                    //     if (val < Real(0.0)) {
+                    //         rho_negative = true;
+                    //        AMREX_DEVICE_PRINTF("❌ NEGATIVE in RK Stage 1: comp=%d, cell=(%d,%d,%d), val=%.6e\n",
+                    //                            n, i, j, k, val);
+                    //     }
+                    // }
+                    // if (rho_negative) amrex::Abort("FillPatcher: positivity-preserving failed at Stage 1");
+                }
+            });
+
+            amrex::ParallelFor(*m_cf_crse_data_tmp, IntVect(0),
+            [=] AMREX_GPU_DEVICE (int bi, int i, int j, int k) noexcept
+            {
+                if (cdomain.contains(i,j,k)) {
                     // positivity-preserving
                     pp_weno(i, j, k, u[bi], u0[bi], m_ncomp);
-                    
-                    Bool rho_negative = false;
-                    if (n >= 10 && n <= 10) {
-                        Real val = u[bi](i,j,k,n);
-                        if (val < Real(0.0)) {
-                            rho_negative = true;
-                           AMREX_DEVICE_PRINTF("❌ NEGATIVE in RK Stage 2: comp=%d, cell=(%d,%d,%d), val=%.6e\n",
-                                               n, i, j, k, val);
-                        }
+
+                    // negative density checking
+                    bool rho_negative = false;
+                    Real val = u[bi](i,j,k,10);
+                    if (val < Real(0.0)) {
+                        rho_negative = true;
+                        AMREX_DEVICE_PRINTF("❌ NEGATIVE in RK Stage 2: comp=%d, cell=(%d,%d,%d), val=%.6e\n",
+                                            10, i, j, k, val);
                     }
                     if (rho_negative) amrex::Abort("FillPatcher: positivity-preserving failed at Stage 1");
                 }
@@ -635,22 +674,38 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                     Real utt = d1*kk1 + d2*kk2 + d3*kk3;
                     u[bi](i,j,k,n) = u0[bi](i,j,k,n) + dtc*
                         (uu + Real(0.5)*r*ut + Real(0.25)*r*r*utt);
-                    // positivity-preserving
-                    // if (n >= 0 && n <= m_ncomp-6) {  // MRHO = NEQ - 6
-                    //     u[bi](i,j,k,n) = amrex::max(u[bi](i,j,k,n), Real(0.0));
-                    //     if (n == m_ncomp-6) u[bi](i,j,k,n) = amrex::max(u[bi](i,j,k,n), Real(1.0e-31));
+ 
+                    // // positivity-preserving
+                    // pp_weno(i, j, k, u[bi], u0[bi], m_ncomp);
+
+                    // // negative density checking
+                    // bool rho_negative = false;
+                    // if (n >= 10 && n <= 10) {
+                    //     Real val = u[bi](i,j,k,n);
+                    //     if (val < Real(0.0)) {
+                    //         rho_negative = true;
+                    //        AMREX_DEVICE_PRINTF("❌ NEGATIVE in RK Stage 1: comp=%d, cell=(%d,%d,%d), val=%.6e\n",
+                    //                            n, i, j, k, val);
+                    //     }
                     // }
+                    // if (rho_negative) amrex::Abort("FillPatcher: positivity-preserving failed at Stage 1");
+                }
+            });
+
+            amrex::ParallelFor(*m_cf_crse_data_tmp, IntVect(0),
+            [=] AMREX_GPU_DEVICE (int bi, int i, int j, int k) noexcept
+            {
+                if (cdomain.contains(i,j,k)) {
                     // positivity-preserving
                     pp_weno(i, j, k, u[bi], u0[bi], m_ncomp);
 
-                    Bool rho_negative = false;
-                    if (n >= 10 && n <= 10) {
-                        Real val = u[bi](i,j,k,n);
-                        if (val < Real(0.0)) {
-                            rho_negative = true;
-                           AMREX_DEVICE_PRINTF("❌ NEGATIVE in RK Stage 3: comp=%d, cell=(%d,%d,%d), val=%.6e\n",
-                                               n, i, j, k, val);
-                        }
+                    // negative density checking
+                    bool rho_negative = false;
+                    Real val = u[bi](i,j,k,10);
+                    if (val < Real(0.0)) {
+                        rho_negative = true;
+                        AMREX_DEVICE_PRINTF("❌ NEGATIVE in RK Stage 3: comp=%d, cell=(%d,%d,%d), val=%.6e\n",
+                                            10, i, j, k, val);
                     }
                     if (rho_negative) amrex::Abort("FillPatcher: positivity-preserving failed at Stage 1");
                 }

@@ -441,6 +441,80 @@ void FillPatcher<MF>::storeRKCoarseData (Real /*time*/, Real dt, MF const& S_old
     }
 }
 
+
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+static void pp_weno (int i, int j, int k,  
+                    Array4<Real> const& fine,
+                    Array4<Real const> const& crse,
+                    int ncomp) noexcept
+{
+    using amrex::Real;
+    const int NSP = 10;
+    const int MRHO = NSP;
+    const int MU = NSP+1;
+    const int MV = MU+1;
+    const int MW = MV+1;
+    const int ME = MW+1;
+    const int MT = ME+1;
+
+    Real rhoY_mean[NSP], rho_mean, p_mean, E_mean;
+    {   
+        // obtain averaged values of partial and total densities, and pressure
+        Real Yk[NSP];
+        rho_mean = crse(i,j,k,MRHO);
+        for (int n = 0; n < NSP; ++n) {
+            rhoY_mean[n] = crse(i,j,k,n);
+            Yk[n] = rhoY_mean[n]/rho_mean;
+        }
+        Real ein = crse(i,j,k,ME) - 0.5*(crse(i,j,k,MU)*crse(i,j,k,MU)
+                                            + crse(i,j,k,MV)*crse(i,j,k,MV)
+                                            + crse(i,j,k,MW)*crse(i,j,k,MW))/rho_mean;
+#ifndef USE_FUEGO_EOS
+        p_mean = (d_parmPtr->eos_gamma - 1.0)*ein;
+#else
+        Real T = crse(i,j,k,MT);
+        auto eos = pele::physics::PhysicsType::eos();
+        eos.RTY2P(rho_mean, T, &Yk[0], p_mean);
+#endif
+        E_mean = crse(i,j,k,ME);
+    }
+    {   
+        // remedy rho, rhoYk and p
+        Real theta1, theta2;
+        Real rho = fine(i,j,k,MRHO);
+        Real eps = amrex::min(Real(1.0e-13), rho_mean);
+        Real rho_min = amrex::min(rho, rho_mean);
+        theta1 = amrex::min(Real(1.0), amrex::Math::abs((rho_mean-eps)/(rho_mean-rho_min)));
+        fine(i,j,k,MRHO) = theta1*rho + (Real(1.0)-theta1)*rho_mean;
+        for (int n = 0; n < NSP; ++n) {
+            Real rhoY_min = amrex::min(fine(i,j,k,n), rhoY_mean[n]);
+            theta1 = amrex::min(Real(1.0), amrex::Math::abs(rhoY_mean[n]/(rhoY_mean[n]-rhoY_min)));
+            fine(i,j,k,n) = theta1*fine(i,j,k,n) + (Real(1.0)-theta1)*rhoY_mean[n];
+        }
+
+        Real ein = fine(i,j,k,ME) - 0.5*(fine(i,j,k,MU)*fine(i,j,k,MU)
+                                                + fine(i,j,k,MV)*fine(i,j,k,MV)
+                                                + fine(i,j,k,MW)*fine(i,j,k,MW))/fine(i,j,k,MRHO);
+        Real Yk[NSP], p;
+        Real rho_hat = fine(i,j,k,MRHO);
+        for (int n = 0; n < NSP; ++n) {
+            Yk[n] = fine(i,j,k,n)/rho_hat;
+        }
+#ifndef USE_FUEGO_EOS
+        p = (d_parmPtr->eos_gamma - 1.0)*ein;
+#else
+        auto eos = pele::physics::PhysicsType::eos();
+        Real T = fine(i,j,k,MT);
+        eos.RTY2P(rho_hat, T, &Yk[0], p);
+#endif                    
+        if (p < Real(0.0)) {
+            theta2 = amrex::min(Real(1.0), p_mean/(p_mean-p));
+            Real E = fine(i,j,k,ME);
+            fine(i,j,k,ME) = theta2*E + (Real(1.0) - theta2)*E_mean;
+        }
+    }
+}
+
 template <typename MF>
 template <typename BC>
 void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
@@ -502,19 +576,21 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                     Real kk3 = k3[bi](i,j,k,n);
                     Real uu  = b1*kk1 + b2*kk2 + b3*kk3;
                     u[bi](i,j,k,n) = u0[bi](i,j,k,n) + dtc*uu;
+
                     // positivity-preserving
-                    // if (n >= 0 && n <= m_ncomp-6) {  // MRHO = NEQ - 6
-                    //     u[bi](i,j,k,n) = amrex::max(u[bi](i,j,k,n), Real(0.0));
-                    //     if (n == m_ncomp-6) u[bi](i,j,k,n) = amrex::max(u[bi](i,j,k,n), Real(1.0e-31));
-                    // }
+                    pp_weno(i, j, k, u[bi], u0[bi], m_ncomp);
+
+                    // negative density checking
+                    Bool rho_negative = false;
                     if (n >= 10 && n <= 10) {
                         Real val = u[bi](i,j,k,n);
                         if (val < Real(0.0)) {
+                            rho_negative = true;
                            AMREX_DEVICE_PRINTF("❌ NEGATIVE in RK Stage 1: comp=%d, cell=(%d,%d,%d), val=%.6e\n",
                                                n, i, j, k, val);
-                           amrex::Abort("FillPatcher: positivity-preserving failed at Stage 1");
                         }
                     }
+                    if (rho_negative) amrex::Abort("FillPatcher: positivity-preserving failed at Stage 1");
                 }
             });
         } else if (stage == 2) {
@@ -529,19 +605,20 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                     Real uu = b1*kk1 + b2*kk2 + b3*kk3;
                     Real ut = c1*kk1 + c2*kk2 + c3*kk3;
                     u[bi](i,j,k,n) = u0[bi](i,j,k,n) + dtc*(uu + r*ut);
+                    
                     // positivity-preserving
-                    // if (n >= 0 && n <= m_ncomp-6) {  // MRHO = NEQ - 6
-                    //     u[bi](i,j,k,n) = amrex::max(u[bi](i,j,k,n), Real(0.0));
-                    //     if (n == m_ncomp-6) u[bi](i,j,k,n) = amrex::max(u[bi](i,j,k,n), Real(1.0e-31));
-                    // }
+                    pp_weno(i, j, k, u[bi], u0[bi], m_ncomp);
+                    
+                    Bool rho_negative = false;
                     if (n >= 10 && n <= 10) {
                         Real val = u[bi](i,j,k,n);
                         if (val < Real(0.0)) {
+                            rho_negative = true;
                            AMREX_DEVICE_PRINTF("❌ NEGATIVE in RK Stage 2: comp=%d, cell=(%d,%d,%d), val=%.6e\n",
                                                n, i, j, k, val);
-                           amrex::Abort("FillPatcher: positivity-preserving failed at Stage 2");
                         }
                     }
+                    if (rho_negative) amrex::Abort("FillPatcher: positivity-preserving failed at Stage 1");
                 }
             });
         } else if (stage == 3) {
@@ -563,14 +640,19 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                     //     u[bi](i,j,k,n) = amrex::max(u[bi](i,j,k,n), Real(0.0));
                     //     if (n == m_ncomp-6) u[bi](i,j,k,n) = amrex::max(u[bi](i,j,k,n), Real(1.0e-31));
                     // }
+                    // positivity-preserving
+                    pp_weno(i, j, k, u[bi], u0[bi], m_ncomp);
+                    
+                    Bool rho_negative = false;
                     if (n >= 10 && n <= 10) {
                         Real val = u[bi](i,j,k,n);
                         if (val < Real(0.0)) {
+                            rho_negative = true;
                            AMREX_DEVICE_PRINTF("❌ NEGATIVE in RK Stage 3: comp=%d, cell=(%d,%d,%d), val=%.6e\n",
                                                n, i, j, k, val);
-                           amrex::Abort("FillPatcher: positivity-preserving failed at Stage 3");
                         }
                     }
+                    if (rho_negative) amrex::Abort("FillPatcher: positivity-preserving failed at Stage 1");
                 }
             });
         }

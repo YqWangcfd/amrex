@@ -443,7 +443,7 @@ void FillPatcher<MF>::storeRKCoarseData (Real /*time*/, Real dt, MF const& S_old
 
 
 AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-void pp_weno (int i, int j, int k,  
+static void pp_weno (int i, int j, int k,  
             Array4<Real> const& fine,
             Array4<Real const> const& crse,
             int ncomp) noexcept
@@ -593,13 +593,13 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                     // if (rho_negative) amrex::Abort("FillPatcher: positivity-preserving failed at Stage 1");
                 }
             });
-
+            int l_ncomp = m_ncomp;
             amrex::ParallelFor(*m_cf_crse_data_tmp, IntVect(0),
             [=] AMREX_GPU_DEVICE (int bi, int i, int j, int k) noexcept
             {
                 if (cdomain.contains(i,j,k)) {
                     // positivity-preserving
-                    pp_weno(i, j, k, u[bi], u0[bi], m_ncomp);
+                    pp_weno(i, j, k, u[bi], u0[bi], l_ncomp);
 
                     // negative density checking
                     bool rho_negative = false;
@@ -642,12 +642,13 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                 }
             });
 
+            int l_ncomp = m_ncomp;
             amrex::ParallelFor(*m_cf_crse_data_tmp, IntVect(0),
             [=] AMREX_GPU_DEVICE (int bi, int i, int j, int k) noexcept
             {
                 if (cdomain.contains(i,j,k)) {
                     // positivity-preserving
-                    pp_weno(i, j, k, u[bi], u0[bi], m_ncomp);
+                    pp_weno(i, j, k, u[bi], u0[bi], l_ncomp);
 
                     // negative density checking
                     bool rho_negative = false;
@@ -692,12 +693,13 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
                 }
             });
 
+            int l_ncomp = m_ncomp;
             amrex::ParallelFor(*m_cf_crse_data_tmp, IntVect(0),
             [=] AMREX_GPU_DEVICE (int bi, int i, int j, int k) noexcept
             {
                 if (cdomain.contains(i,j,k)) {
                     // positivity-preserving
-                    pp_weno(i, j, k, u[bi], u0[bi], m_ncomp);
+                    pp_weno(i, j, k, u[bi], u0[bi], l_ncomp);
 
                     // negative density checking
                     bool rho_negative = false;

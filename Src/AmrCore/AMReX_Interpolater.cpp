@@ -1672,11 +1672,6 @@ CellWENO::interp (const FArrayBox& crse,
     {
         central_weno_interp_z(i,j,k,n,tmpzarr,crsearr,ratio);        
     });
-    // positivity-preserving
-    AMREX_HOST_DEVICE_PARALLEL_FOR_3D_FLAG(runon, bz, i, j, k, 
-    {
-        pp_weno(i,j,k,tmpzarr,crsearr,ncomp,ratio);
-    });
 #endif
 
 #if (AMREX_SPACEDIM >= 2)
@@ -1698,11 +1693,6 @@ CellWENO::interp (const FArrayBox& crse,
     {
         central_weno_interp_y(i,j,k,n,tmpyarr,srcarr,ratio);
     });
-    // positivity-preserving
-    AMREX_HOST_DEVICE_PARALLEL_FOR_3D_FLAG(runon, by, i, j, k, 
-    {
-        pp_weno(i,j,k,tmpyarr,srcarr,ncomp,ratio);
-    });
 #endif
 
 #if (AMREX_SPACEDIM == 1)
@@ -1714,11 +1704,6 @@ CellWENO::interp (const FArrayBox& crse,
                                            i, j, k, n,
     {
         central_weno_interp_x(i,j,k,n,finearr,srcarr,ratio);
-    });
-    // positivity-preserving
-    AMREX_HOST_DEVICE_PARALLEL_FOR_3D_FLAG(runon, target_fine_region, i, j, k, 
-    {
-        pp_weno(i,j,k,finearr,srcarr,ncomp,ratio);
     });
 }
 

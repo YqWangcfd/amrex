@@ -193,8 +193,8 @@ public:
      */
 
     template <typename BC>
-    void fillRK (int stage, int iteration, int ncycle,
-                 MF& mf, Real time, BC& cbc, 
+    void fillRK (int stage, int iteration, int ncycle, MF& crse_mf,
+                 MF& mf, Real time, BC& cbc, BC& fbc,
                  Vector<BCRec> const& bcs);
 
     template <typename BC>
@@ -445,8 +445,8 @@ void FillPatcher<MF>::storeRKCoarseData (Real /*time*/, Real dt, MF const& S_old
 
 template <typename MF>
 template <typename BC>
-void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
-                              MF& mf, Real time, BC& cbc, 
+void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle, MF& crse_mf,
+                              MF& mf, Real time, BC& cbc, BC& fbc,
                               Vector<BCRec> const& bcs)
 {
     BL_PROFILE("FillPatcher::fillRK()");
@@ -614,8 +614,11 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle,
 
     cbc(*m_cf_crse_data_tmp, 0, m_ncomp, m_cf_crse_data_tmp->nGrowVect(), time, 0); // m_cf_crse_data_tmp->nGrowVect() = 0, m_gnhost=6
 
-    mf.ParallelCopy(*m_cf_crse_data_tmp, 0, 0, m_ncomp, IntVect(0), IntVect(0));
-  
+    crse_mf.ParallelCopy(*m_cf_crse_data_tmp, 0, 0, m_ncomp, IntVect(0), IntVect(0));
+    
+    fbc(mf, 0, m_ncomp, m_nghost, time, 0);
+
+    // amrex::Print() << "m_nghost= " << m_nghost << std::endl;
 }
 
 template <typename MF>

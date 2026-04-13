@@ -1392,6 +1392,239 @@ public:
                 const IntVect&   ratio);
 };
 
+/**
+* \brief HWENO mapper scaffold for 2D SD AMR.
+*
+* Current implementation keeps behavior compatible by delegating to
+* existing mortar scale-refinement interpolation/restriction. This class
+* provides the dedicated AMReX Interpolater interface for future HWENO
+* kernels in interp/restrict.
+*/
+class HermiteWENO2D
+    :
+    public Interpolater
+{
+public:
+    static constexpr int sd_order_hweno = 5;
+    static constexpr int sd_space_hweno = 25;
+    static constexpr Real hweno_eps = Real(1.0e-12);
+
+    struct Moments1D
+    {
+        Real ubar = Real(0.0);
+        Real g1   = Real(0.0);
+        Real g2   = Real(0.0);
+    };
+
+    enum class SmoothRegion : int
+    {
+        ChildLeft = 0,
+        ChildRight = 1,
+        Parent = 2
+    };
+
+    Box CoarseBox (const Box& fine, int ratio) override;
+
+    Box CoarseBox (const Box& fine, const IntVect& ratio) override;
+
+    void interp (const FArrayBox& crse,
+                 int              crse_comp,
+                 FArrayBox&       fine,
+                 int              fine_comp,
+                 int              ncomp,
+                 const Box&       fine_region,
+                 const IntVect&   ratio,
+                 const Geometry&  crse_geom,
+                 const Geometry&  fine_geom,
+                 Vector<BCRec> const& bcr,
+                 int              actual_comp,
+                 int              actual_state,
+                 RunOn            runon) override;
+
+    void restrict (const FArrayBox& fine,
+                   int              fine_comp,
+                   FArrayBox&       crse,
+                   int              crse_comp,
+                   int              ncomp,
+                   const Box&       crse_region,
+                   const IntVect&   ratio,
+                   const Geometry&  fine_geom,
+                   const Geometry&  crse_geom,
+                   Vector<BCRec> const& bcr,
+                   int              actual_comp,
+                   int              actual_state,
+                   RunOn            runon) override;
+
+private:
+    static constexpr Real sd5_w0[sd_order_hweno] = {
+        Real(0.0838906142333418), Real(0.2627760524333247), Real(0.3066666666666672),
+        Real(0.2627760524333248), Real(0.0838906142333418)
+    };
+    static constexpr Real sd5_w1[sd_order_hweno] = {
+        Real(-1.2310734148701015), Real(0.2906170112021445), Real(0.0),
+        Real(-0.2906170112021433), Real(1.2310734148701010)
+    };
+    static constexpr Real sd5_w2[sd_order_hweno] = {
+        Real(13.08854381999832), Real(-22.688543819998323), Real(19.200000000000017),
+        Real(-22.688543819998323), Real(13.088543819998318)
+    };
+
+    static constexpr Real P1DProj[2][sd_order_hweno][sd_order_hweno] = {
+        // child-0
+        {
+            {    1.12654974652665,        -0.186142938148129,        0.0914519644157657,       -0.0461683609041028,        0.0143095881098133},
+            {   0.390101138933886,         0.778774529455573,        -0.249911278368878,         0.116171197060537,       -0.0351355870811186},
+            { -0.0685095954079375,         0.921586454726535,                       0.2,       -0.0743728592265771,        0.0212959999079796},
+            { -0.0714627134813867,         0.365161025548815,         0.835853630900151,        -0.175557601783673,        0.0460056588160928},
+            {-0.00814181071916594,        0.0350615631541238,         0.997605683052961,        -0.032258761289366,       0.00773332580144749}
+        }, 
+        // child-1
+        {
+            {0.00773332580144751,       -0.0322587612893661,         0.997605683052961,        0.0350615631541239,      -0.00814181071916596},
+            { 0.0460056588160928,        -0.175557601783673,         0.835853630900152,         0.365161025548815,       -0.0714627134813866},
+            { 0.0212959999079796,       -0.0743728592265771,                       0.2,         0.921586454726535,       -0.0685095954079375},
+            {-0.0351355870811186,         0.116171197060537,        -0.249911278368878,         0.778774529455573,         0.390101138933886},
+            { 0.0143095881098133,       -0.0461683609041027,        0.0914519644157655,        -0.186142938148128,          1.12654974652665}
+        }, 
+    };
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static Moments1D NodalToMoments1D (const Real* U, Real h) noexcept
+    {
+        Moments1D m;
+        for (int s = 0; s < sd_order_hweno; ++s) {
+            m.ubar += sd5_w0[s] * U[s];
+            m.g1   += sd5_w1[s] * U[s];
+            m.g2   += sd5_w2[s] * U[s];
+        }
+        const Real h_safe = amrex::max(h, Real(1.0e-30));
+        m.g1 /= h_safe;
+        m.g2 /= (h_safe * h_safe);
+        return m;
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static GpuArray<GpuArray<Real,4>, 4> Build4Candidates (
+        Real um, Real u0, Real up,
+        Real gm, Real gp, Real g2m, Real g2p,
+        Real h) noexcept
+    {
+        const Real hg_m  = h * gm;
+        const Real hg_p  = h * gp;
+        const Real h2g_m = h * h * g2m;
+        const Real h2g_p = h * h * g2p;
+
+        GpuArray<GpuArray<Real,4>, 4> c{};
+
+        c[0][0] = -Real(1.0/24.0)*um + Real(13.0/12.0)*u0 - Real(1.0/24.0)*up;
+        c[0][1] = -Real(23.0/16.0)*um + Real(5.0/4.0)*u0 + Real(3.0/16.0)*up - Real(5.0/8.0)*hg_m;
+        c[0][2] =  Real(1.0/2.0)*um - u0 + Real(1.0/2.0)*up;
+        c[0][3] =  Real(3.0/4.0)*um - u0 + Real(1.0/4.0)*up + Real(1.0/2.0)*hg_m;
+
+        c[1][0] = -Real(1.0/24.0)*um + Real(13.0/12.0)*u0 - Real(1.0/24.0)*up;
+        c[1][1] = -Real(3.0/16.0)*um - Real(5.0/4.0)*u0 + Real(23.0/16.0)*up - Real(5.0/8.0)*hg_p;
+        c[1][2] =  Real(1.0/2.0)*um - u0 + Real(1.0/2.0)*up;
+        c[1][3] = -Real(1.0/4.0)*um + u0 - Real(3.0/4.0)*up + Real(1.0/2.0)*hg_p;
+
+        c[2][0] =  Real(1.0/4.0)*um + Real(3.0/4.0)*u0 + Real(1.0/4.0)*hg_m + Real(1.0/12.0)*h2g_m;
+        c[2][1] = -Real(11.0/4.0)*um + Real(11.0/4.0)*u0 - Real(7.0/4.0)*hg_m - Real(3.0/8.0)*h2g_m;
+        c[2][2] = -Real(3.0)*um + Real(3.0)*u0 - Real(3.0)*hg_m - h2g_m;
+        c[2][3] = -um + u0 - hg_m - Real(1.0/2.0)*h2g_m;
+
+        c[3][0] =  Real(3.0/4.0)*u0 + Real(1.0/4.0)*up - Real(1.0/4.0)*hg_p + Real(1.0/12.0)*h2g_p;
+        c[3][1] = -Real(11.0/4.0)*u0 + Real(11.0/4.0)*up - Real(7.0/4.0)*hg_p + Real(3.0/8.0)*h2g_p;
+        c[3][2] =  Real(3.0)*u0 - Real(3.0)*up + Real(3.0)*hg_p - h2g_p;
+        c[3][3] = -u0 + up - hg_p + Real(1.0/2.0)*h2g_p;
+
+        return c;
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static Real BetaFromCubic (GpuArray<Real,4> const& c, SmoothRegion region) noexcept
+    {
+        if (region == SmoothRegion::Parent) {
+            return Real(2.0)*c[1]*c[1]
+                 + Real(32.0/3.0)*c[2]*c[2]
+                 + Real(498.0/5.0)*c[3]*c[3]
+                 + Real(4.0)*c[1]*c[3];
+        }
+
+        const Real sign = (region == SmoothRegion::ChildLeft) ? Real(-1.0) : Real(1.0);
+        return c[1]*c[1]
+             + Real(16.0/3.0)*c[2]*c[2]
+             + Real(249.0/5.0)*c[3]*c[3]
+             + sign*Real(2.0)*c[1]*c[2]
+             + Real(2.0)*c[1]*c[3]
+             + sign*Real(15.0)*c[2]*c[3];
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static GpuArray<Real,4> ZWeights (GpuArray<Real,4> const& beta) noexcept
+    {
+        constexpr GpuArray<Real,4> d = {
+            Real(3.0/8.0), Real(3.0/8.0), Real(1.0/8.0), Real(1.0/8.0)
+        };
+
+        const Real diff = beta[0] - beta[3];
+        const Real tau = (diff >= Real(0.0)) ? diff : -diff;
+        GpuArray<Real,4> alpha{};
+        Real sum_alpha = Real(0.0);
+        for (int k = 0; k < 4; ++k) {
+            const Real r = tau / (beta[k] + hweno_eps);
+            alpha[k] = d[k] * (Real(1.0) + r * r); // p=2 fixed
+            sum_alpha += alpha[k];
+        }
+
+        const Real inv = Real(1.0) / amrex::max(sum_alpha, Real(1.0e-30));
+        GpuArray<Real,4> w{};
+        for (int k = 0; k < 4; ++k) {
+            w[k] = alpha[k] * inv;
+        }
+        return w;
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static Real EvalCubic (GpuArray<Real,4> const& b, Real xi) noexcept
+    {
+        return ((b[3]*xi + b[2])*xi + b[1])*xi + b[0];
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static Real P1DProjY (int child, int q, int s) noexcept
+    {
+        return Mortar2D::Py2D_prol[child][q][s];
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static Real P1DProjX (int child, int s, int q) noexcept
+    {
+        return Mortar2D::Px2D_prol[child][s][q];
+    }
+
+
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static void hweno_interp_z (int i, int j, int k, int n,
+                                Array4<Real> const& tmparr,
+                                Array4<Real const> const& srcarr,
+                                IntVect const& ratio,
+                                Real hdir) noexcept;
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static void hweno_interp_y (int i, int j, int k, int n,
+                                Array4<Real> const& tmparr,
+                                Array4<Real const> const& srcarr,
+                                IntVect const& ratio,
+                                Real hdir) noexcept;
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static void hweno_interp_x (int i, int j, int k, int n,
+                                Array4<Real> const& finearr,
+                                Array4<Real const> const& srcarr,
+                                IntVect const& ratio,
+                                Real hdir) noexcept;
+};
+
 //! CONSTRUCT A GLOBAL OBJECT OF EACH VERSION.
 extern AMREX_EXPORT PCInterp                  pc_interp;
 extern AMREX_EXPORT NodeBilinear              node_bilinear_interp;
@@ -1408,6 +1641,7 @@ extern AMREX_EXPORT CellQuartic               cell_quartic_interp;
 extern AMREX_EXPORT CellWENO                  cell_weno_interp;
 extern AMREX_EXPORT Mortar2D                  mortar_interp_orderRef;
 extern AMREX_EXPORT Mortar2D                  mortar_interp_scaleRef;
+extern AMREX_EXPORT HermiteWENO2D             hermite_weno_interp;
 
 }
 

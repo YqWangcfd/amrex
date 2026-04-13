@@ -1543,19 +1543,21 @@ private:
     static Real BetaFromCubic (GpuArray<Real,4> const& c, SmoothRegion region) noexcept
     {
         if (region == SmoothRegion::Parent) {
-            return Real(2.0)*c[1]*c[1]
-                 + Real(32.0/3.0)*c[2]*c[2]
-                 + Real(498.0/5.0)*c[3]*c[3]
-                 + Real(4.0)*c[1]*c[3];
+            // Consistent with p(xi) defined on parent reference interval [-1/2, 1/2].
+            return c[1]*c[1]
+                 + Real(13.0/3.0)*c[2]*c[2]
+                 + Real(3129.0/80.0)*c[3]*c[3]
+                 + Real(1.0/2.0)*c[1]*c[3];
         }
 
         const Real sign = (region == SmoothRegion::ChildLeft) ? Real(-1.0) : Real(1.0);
-        return c[1]*c[1]
-             + Real(16.0/3.0)*c[2]*c[2]
-             + Real(249.0/5.0)*c[3]*c[3]
-             + sign*Real(2.0)*c[1]*c[2]
-             + Real(2.0)*c[1]*c[3]
-             + sign*Real(15.0)*c[2]*c[3];
+        // Child intervals are [-1/2, 0] and [0, 1/2] in current coordinate use.
+        return Real(1.0/2.0)*c[1]*c[1]
+             + Real(13.0/6.0)*c[2]*c[2]
+             + Real(3129.0/160.0)*c[3]*c[3]
+             + sign*Real(1.0/2.0)*c[1]*c[2]
+             + Real(1.0/4.0)*c[1]*c[3]
+             + sign*Real(51.0/16.0)*c[2]*c[3];
     }
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE

@@ -1416,6 +1416,17 @@ public:
         Real g2   = Real(0.0);
     };
 
+    struct RestrictInput1D
+    {
+        Real Ujm1  = Real(0.0);
+        Real Uj    = Real(0.0);
+        Real Ujp1  = Real(0.0);
+        Real Gjm1_1 = Real(0.0);
+        Real Gjp1_1 = Real(0.0);
+        Real Gjm1_2 = Real(0.0);
+        Real Gjp1_2 = Real(0.0);
+    };
+
     enum class SmoothRegion : int
     {
         ChildLeft = 0,
@@ -1603,6 +1614,26 @@ private:
         return Mortar2D::Px2D_prol[child][s][q];
     }
 
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static RestrictInput1D BuildRestrictInput1D (
+        Moments1D const& m_m5q4,
+        Moments1D const& m_m3q4,
+        Moments1D const& m_m1q4,
+        Moments1D const& m_p1q4,
+        Moments1D const& m_p3q4,
+        Moments1D const& m_p5q4) noexcept
+    {
+        // Section 13.4: piecewise integration from fine moments to coarse inputs.
+        RestrictInput1D in;
+        in.Ujm1   = Real(0.5) * (m_m5q4.ubar + m_m3q4.ubar);
+        in.Uj     = Real(0.5) * (m_m1q4.ubar + m_p1q4.ubar);
+        in.Ujp1   = Real(0.5) * (m_p3q4.ubar + m_p5q4.ubar);
+        in.Gjm1_1 = Real(0.5) * (m_m5q4.g1   + m_m3q4.g1);
+        in.Gjp1_1 = Real(0.5) * (m_p3q4.g1   + m_p5q4.g1);
+        in.Gjm1_2 = Real(0.5) * (m_m5q4.g2   + m_m3q4.g2);
+        in.Gjp1_2 = Real(0.5) * (m_p3q4.g2   + m_p5q4.g2);
+        return in;
+    }
 
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
@@ -1625,6 +1656,30 @@ private:
                                 Array4<Real const> const& srcarr,
                                 IntVect const& ratio,
                                 Real hdir) noexcept;
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static void hweno_restrict_z (int i, int j, int k, int n,
+                                  Array4<Real> const& tmparr,
+                                  Array4<Real const> const& srcarr,
+                                  IntVect const& ratio,
+                                  Real hfine,
+                                  Real hcrse) noexcept;
+  
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static void hweno_restrict_y (int i, int j, int k, int n,
+                                  Array4<Real> const& tmparr,
+                                  Array4<Real const> const& srcarr,
+                                  IntVect const& ratio,
+                                  Real hfine,
+                                  Real hcrse) noexcept;
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static void hweno_restrict_x (int i, int j, int k, int n,
+                                  Array4<Real> const& crsearr,
+                                  Array4<Real const> const& srcarr,
+                                  IntVect const& ratio,
+                                  Real hfine,
+                                  Real hcrse) noexcept;
 };
 
 //! CONSTRUCT A GLOBAL OBJECT OF EACH VERSION.

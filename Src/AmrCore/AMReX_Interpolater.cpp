@@ -1757,6 +1757,7 @@ CellWENO::restrict (const FArrayBox& fine,
 
 #if (AMREX_SPACEDIM >= 2)
     Box by = amrex::refine(target_crse_region, IntVect(AMREX_D_DECL(ratio[0],1,1)));
+    by.grow(IntVect(AMREX_D_DECL(ratio[0],0,0))); // halo for x-stage i±1 stencil
     FArrayBox tmpy(by, ncomp);
 #ifdef AMREX_USE_GPU
     Elixir tmpy_eli;
@@ -2420,12 +2421,157 @@ HermiteWENO2D::hweno_interp_x (int i, int j, int k, int n,
         for (int s = 0; s < sd_order_hweno; ++s) {
             Real val = Real(0.0);
             for (int q = 0; q < sd_order_hweno; ++q) {
-                // val += P1DProjX(child, s, q) * up[q];
-                val += up[q] * P1DProj[child][s][q];
+                val += P1DProjX(child, s, q) * up[q];
             }
 
             const int off = box2point(s, line, 0, n);
             finearr(i, j, k, off) = val;
+        }
+    }
+}
+
+AMREX_GPU_HOST_DEVICE
+AMREX_FORCE_INLINE
+void
+HermiteWENO2D::hweno_restrict_y (int i, int j, int k, int n,
+                                 Array4<Real> const& tmparr,
+                                 Array4<Real const> const& srcarr,
+                                 IntVect const& ratio,
+                                 Real hfine,
+                                 Real hcrse) noexcept
+{
+    const int ic = i;
+    const int jc = j;
+    const int kc = (AMREX_SPACEDIM > 2) ? k : 0;
+
+    const int jmf0 = ratio[1] * (jc - 1);
+    const int jmf1 = jmf0 + 1;
+    const int j0f0 = ratio[1] * jc;
+    const int j0f1 = j0f0 + 1;
+    const int jpf0 = ratio[1] * (jc + 1);
+    const int jpf1 = jpf0 + 1;
+
+    const IntVect ivmf0(AMREX_D_DECL(ic, jmf0, kc));
+    const IntVect ivmf1(AMREX_D_DECL(ic, jmf1, kc));
+    const IntVect iv0f0(AMREX_D_DECL(ic, j0f0, kc));
+    const IntVect iv0f1(AMREX_D_DECL(ic, j0f1, kc));
+    const IntVect ivpf0(AMREX_D_DECL(ic, jpf0, kc));
+    const IntVect ivpf1(AMREX_D_DECL(ic, jpf1, kc));
+
+    for (int line = 0; line < sd_order_hweno; ++line) {
+        GpuArray<Real,sd_order_hweno> Um0{}, Um1{}, U00{}, U01{}, Up0{}, Up1{};
+        for (int s = 0; s < sd_order_hweno; ++s) {
+            const int off = box2point(line, s, 0, n);
+            Um0[s] = srcarr(ivmf0[0], ivmf0[1], ivmf0[2], off);
+            Um1[s] = srcarr(ivmf1[0], ivmf1[1], ivmf1[2], off);
+            U00[s] = srcarr(iv0f0[0], iv0f0[1], iv0f0[2], off);
+            U01[s] = srcarr(iv0f1[0], iv0f1[1], iv0f1[2], off);
+            Up0[s] = srcarr(ivpf0[0], ivpf0[1], ivpf0[2], off);
+            Up1[s] = srcarr(ivpf1[0], ivpf1[1], ivpf1[2], off);
+        }
+
+        const auto m_m5q4 = NodalToMoments1D(Um0.data(), hfine);
+        const auto m_m3q4 = NodalToMoments1D(Um1.data(), hfine);
+        const auto m_m1q4 = NodalToMoments1D(U00.data(), hfine);
+        const auto m_p1q4 = NodalToMoments1D(U01.data(), hfine);
+        const auto m_p3q4 = NodalToMoments1D(Up0.data(), hfine);
+        const auto m_p5q4 = NodalToMoments1D(Up1.data(), hfine);
+        const auto rin = BuildRestrictInput1D(m_m5q4, m_m3q4, m_m1q4,
+                                              m_p1q4, m_p3q4, m_p5q4);
+
+        const auto cand = Build4Candidates(rin.Ujm1, rin.Uj, rin.Ujp1,
+                                           rin.Gjm1_1, rin.Gjp1_1,
+                                           rin.Gjm1_2, rin.Gjp1_2, hcrse);
+
+        GpuArray<Real,4> beta{};
+        for (int kk = 0; kk < 4; ++kk) {
+            beta[kk] = BetaFromCubic(cand[kk], SmoothRegion::Parent);
+        }
+        const auto omega = ZWeights(beta);
+
+        GpuArray<Real,4> bH{};
+        for (int m = 0; m < 4; ++m) {
+            for (int kk = 0; kk < 4; ++kk) {
+                bH[m] += omega[kk] * cand[kk][m];
+            }
+        }
+
+        for (int s = 0; s < sd_order_hweno; ++s) {
+            const int off = box2point(line, s, 0, n);
+            tmparr(i, j, k, off) = EvalCubic(bH, xi_sol[s]/2.0);
+        }
+    }
+}
+
+AMREX_GPU_HOST_DEVICE
+AMREX_FORCE_INLINE
+void
+HermiteWENO2D::hweno_restrict_x (int i, int j, int k, int n,
+                                 Array4<Real> const& crsearr,
+                                 Array4<Real const> const& srcarr,
+                                 IntVect const& ratio,
+                                 Real hfine,
+                                 Real hcrse) noexcept
+{
+    const int ic = i;
+    const int jc = j;
+    const int kc = (AMREX_SPACEDIM > 2) ? k : 0;
+
+    const int imf0 = ratio[0] * (ic - 1);
+    const int imf1 = imf0 + 1;
+    const int i0f0 = ratio[0] * ic;
+    const int i0f1 = i0f0 + 1;
+    const int ipf0 = ratio[0] * (ic + 1);
+    const int ipf1 = ipf0 + 1;
+
+    const IntVect ivmf0(AMREX_D_DECL(imf0, jc, kc));
+    const IntVect ivmf1(AMREX_D_DECL(imf1, jc, kc));
+    const IntVect iv0f0(AMREX_D_DECL(i0f0, jc, kc));
+    const IntVect iv0f1(AMREX_D_DECL(i0f1, jc, kc));
+    const IntVect ivpf0(AMREX_D_DECL(ipf0, jc, kc));
+    const IntVect ivpf1(AMREX_D_DECL(ipf1, jc, kc));
+
+    for (int line = 0; line < sd_order_hweno; ++line) {
+        GpuArray<Real,sd_order_hweno> Um0{}, Um1{}, U00{}, U01{}, Up0{}, Up1{};
+        for (int s = 0; s < sd_order_hweno; ++s) {
+            const int off = box2point(s, line, 0, n);
+            Um0[s] = srcarr(ivmf0[0], ivmf0[1], ivmf0[2], off);
+            Um1[s] = srcarr(ivmf1[0], ivmf1[1], ivmf1[2], off);
+            U00[s] = srcarr(iv0f0[0], iv0f0[1], iv0f0[2], off);
+            U01[s] = srcarr(iv0f1[0], iv0f1[1], iv0f1[2], off);
+            Up0[s] = srcarr(ivpf0[0], ivpf0[1], ivpf0[2], off);
+            Up1[s] = srcarr(ivpf1[0], ivpf1[1], ivpf1[2], off);
+        }
+
+        const auto m_m5q4 = NodalToMoments1D(Um0.data(), hfine);
+        const auto m_m3q4 = NodalToMoments1D(Um1.data(), hfine);
+        const auto m_m1q4 = NodalToMoments1D(U00.data(), hfine);
+        const auto m_p1q4 = NodalToMoments1D(U01.data(), hfine);
+        const auto m_p3q4 = NodalToMoments1D(Up0.data(), hfine);
+        const auto m_p5q4 = NodalToMoments1D(Up1.data(), hfine);
+        const auto rin = BuildRestrictInput1D(m_m5q4, m_m3q4, m_m1q4,
+                                              m_p1q4, m_p3q4, m_p5q4);
+
+        const auto cand = Build4Candidates(rin.Ujm1, rin.Uj, rin.Ujp1,
+                                           rin.Gjm1_1, rin.Gjp1_1,
+                                           rin.Gjm1_2, rin.Gjp1_2, hcrse);
+
+        GpuArray<Real,4> beta{};
+        for (int kk = 0; kk < 4; ++kk) {
+            beta[kk] = BetaFromCubic(cand[kk], SmoothRegion::Parent);
+        }
+        const auto omega = ZWeights(beta);
+
+        GpuArray<Real,4> bH{};
+        for (int m = 0; m < 4; ++m) {
+            for (int kk = 0; kk < 4; ++kk) {
+                bH[m] += omega[kk] * cand[kk][m];
+            }
+        }
+
+        for (int s = 0; s < sd_order_hweno; ++s) {
+            const int off = box2point(s, line, 0, n);
+            crsearr(i, j, k, off) = EvalCubic(bH, xi_sol[s]/2.0);
         }
     }
 }
@@ -2496,68 +2642,6 @@ HermiteWENO2D::interp (const FArrayBox& crse,
         hweno_interp_y(i, j, k, n, tmpyarr, srcarr, ratio, hy);
     });
 
-// #if (AMREX_SPACEDIM == 2)
-//     // Directional conservation fix right after y-interp:
-//     // enforce parent(y)-to-children(y) average consistency on tmpy.
-//     if (run_on_gpu) {
-//         Gpu::streamSynchronize();
-//     }
-//     {
-//         Real y_pre_max_abs_err = Real(0.0);
-//         Real y_post_max_abs_err = Real(0.0);
-//         const Box ycheck = amrex::coarsen(by, IntVect(AMREX_D_DECL(1,ratio[1],1))) & crse.box();
-//         const Box ybox = tmpy.box();
-
-//         for (int jc = ycheck.smallEnd(1); jc <= ycheck.bigEnd(1); ++jc) {
-//             for (int ic = ycheck.smallEnd(0); ic <= ycheck.bigEnd(0); ++ic) {
-//                 const IntVect ivy0(AMREX_D_DECL(ic, jc*ratio[1],     0));
-//                 const IntVect ivy1(AMREX_D_DECL(ic, jc*ratio[1] + 1, 0));
-//                 if (!(ybox.contains(ivy0) && ybox.contains(ivy1))) {
-//                     continue;
-//                 }
-
-//                 for (int nv = 0; nv < ncomp/sd_space_hweno; ++nv) { 
-//                     for (int line = 0; line < sd_order_hweno; ++line) {
-//                         Real uc = Real(0.0);
-//                         Real ul = Real(0.0);
-//                         Real ur = Real(0.0);
-//                         for (int s = 0; s < sd_order_hweno; ++s) {
-//                             const int off = box2point(line, s, 0, nv);
-//                             uc += sd5_w0[s] * srcarr(ic, jc, 0, off);
-//                             ul += sd5_w0[s] * tmpyarr(ivy0[0], ivy0[1], 0, off);
-//                             ur += sd5_w0[s] * tmpyarr(ivy1[0], ivy1[1], 0, off);
-//                         }
-//                         const Real uavg = Real(0.5) * (ul + ur);
-//                         const Real delta = uc - uavg;
-//                         y_pre_max_abs_err = amrex::max(y_pre_max_abs_err, std::abs(delta));
-
-//                         for (int s = 0; s < sd_order_hweno; ++s) {
-//                             const int off = box2point(line, s, 0, nv);
-//                             tmpyarr(ivy0[0], ivy0[1], 0, off) += delta;
-//                             tmpyarr(ivy1[0], ivy1[1], 0, off) += delta;
-//                         }
-
-//                         Real ul_post = Real(0.0);
-//                         Real ur_post = Real(0.0);
-//                         for (int s = 0; s < sd_order_hweno; ++s) {
-//                             const int off = box2point(line, s, 0, nv);
-//                             ul_post += sd5_w0[s] * tmpyarr(ivy0[0], ivy0[1], 0, off);
-//                             ur_post += sd5_w0[s] * tmpyarr(ivy1[0], ivy1[1], 0, off);
-//                         }
-//                         const Real post_err = std::abs(Real(0.5)*(ul_post + ur_post) - uc);
-//                         y_post_max_abs_err = amrex::max(y_post_max_abs_err, post_err);
-//                     }
-//                 }
-//             }
-//         }
-
-//         if (ParallelDescriptor::IOProcessor()) {
-//             amrex::Print() << "[HermiteWENO2D::interp] y-dir conservation correction: "
-//                            << "pre_max_abs=" << y_pre_max_abs_err
-//                            << ", post_max_abs=" << y_post_max_abs_err << "\n";
-//         }
-//     }
-// #endif
 #endif
 
 #if (AMREX_SPACEDIM == 1)
@@ -2570,69 +2654,6 @@ HermiteWENO2D::interp (const FArrayBox& crse,
     {
         hweno_interp_x(i, j, k, n, farr, srcarr, ratio, hx);
     });
-
-// #if (AMREX_SPACEDIM == 2)
-//     // Directional conservation fix right after x-interp:
-//     // enforce parent(x)-to-children(x) average consistency on final fine.
-//     if (run_on_gpu) {
-//         Gpu::streamSynchronize();
-//     }
-//     {
-//         Real x_pre_max_abs_err = Real(0.0);
-//         Real x_post_max_abs_err = Real(0.0);
-//         const Box xcheck = amrex::coarsen(target_fine_region, IntVect(AMREX_D_DECL(ratio[0],1,1))) & by;
-//         const Box fbox = fine.box();
-
-//         for (int jf = xcheck.smallEnd(1); jf <= xcheck.bigEnd(1); ++jf) {
-//             for (int ic = xcheck.smallEnd(0); ic <= xcheck.bigEnd(0); ++ic) {
-//                 const IntVect ivf0(AMREX_D_DECL(ic*ratio[0],     jf, 0));
-//                 const IntVect ivf1(AMREX_D_DECL(ic*ratio[0] + 1, jf, 0));
-//                 if (!(fbox.contains(ivf0) && fbox.contains(ivf1))) {
-//                     continue;
-//                 }
-
-//                 for (int nv = 0; nv < ncomp/sd_space_hweno; ++nv) {
-//                     for (int line = 0; line < sd_order_hweno; ++line) {
-//                         Real uc = Real(0.0);
-//                         Real ul = Real(0.0);
-//                         Real ur = Real(0.0);
-//                         for (int s = 0; s < sd_order_hweno; ++s) {
-//                             const int off = box2point(s, line, 0, nv);
-//                             uc += sd5_w0[s] * srcarr(ic, jf, 0, off);
-//                             ul += sd5_w0[s] * farr(ivf0[0], ivf0[1], 0, off);
-//                             ur += sd5_w0[s] * farr(ivf1[0], ivf1[1], 0, off);
-//                         }
-//                         const Real uavg = Real(0.5) * (ul + ur);
-//                         const Real delta = uc - uavg;
-//                         x_pre_max_abs_err = amrex::max(x_pre_max_abs_err, std::abs(delta));
-
-//                         for (int s = 0; s < sd_order_hweno; ++s) {
-//                             const int off = box2point(s, line, 0, nv);
-//                             farr(ivf0[0], ivf0[1], 0, off) += delta;
-//                             farr(ivf1[0], ivf1[1], 0, off) += delta;
-//                         }
-
-//                         Real ul_post = Real(0.0);
-//                         Real ur_post = Real(0.0);
-//                         for (int s = 0; s < sd_order_hweno; ++s) {
-//                             const int off = box2point(s, line, 0, nv);
-//                             ul_post += sd5_w0[s] * farr(ivf0[0], ivf0[1], 0, off);
-//                             ur_post += sd5_w0[s] * farr(ivf1[0], ivf1[1], 0, off);
-//                         }
-//                         const Real post_err = std::abs(Real(0.5)*(ul_post + ur_post) - uc);
-//                         x_post_max_abs_err = amrex::max(x_post_max_abs_err, post_err);
-//                     }
-//                 }
-//             }
-//         }
-
-//         if (ParallelDescriptor::IOProcessor()) {
-//             amrex::Print() << "[HermiteWENO2D::interp] x-dir conservation correction: "
-//                            << "pre_max_abs=" << x_pre_max_abs_err
-//                            << ", post_max_abs=" << x_post_max_abs_err << "\n";
-//         }
-//     }
-// #endif
 }
 
 void
@@ -2651,10 +2672,72 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
                          RunOn            runon)
 {
     BL_PROFILE("HermiteWENO2D::restrict()");
-    // Initial scaffold: preserve existing behavior via mortar scale-ref mapper.
-    mortar_interp_scaleRef.restrict(fine, fine_comp, crse, crse_comp, ncomp,
-                                    crse_region, ratio, fine_geom, crse_geom,
-                                    bcr, actual_comp, actual_state, runon);
+    amrex::ignore_unused(bcr, actual_comp, actual_state);
+
+    AMREX_ASSERT(ratio == 2);
+    AMREX_ASSERT(ncomp % sd_space_hweno == 0);
+
+    const Box target_crse_region = crse_region & crse.box();
+    // const Box inner_box = amrex::grow(target_crse_region, -1);
+    bool run_on_gpu = (runon == RunOn::Gpu && Gpu::inLaunchRegion());
+    amrex::ignore_unused(run_on_gpu);
+
+    Array4<Real const> const& finearr = fine.const_array(fine_comp);
+    Array4<Real>       const& crsearr = crse.array(crse_comp);
+
+#if (AMREX_SPACEDIM == 3)
+    Box bz = amrex::refine(target_crse_region, IntVect(ratio[0],ratio[1],1));
+    FArrayBox tmpz(bz, ncomp);
+#ifdef AMREX_USE_GPU
+    Elixir tmpz_eli;
+    if (run_on_gpu) { tmpz_eli = tmpz.elixir(); }
+#endif
+    Array4<Real> const& tmpzarr = tmpz.array();
+
+    const Real hz_f = fine_geom.CellSize(2);
+    const Real hz_c = crse_geom.CellSize(2);
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, bz, ncomp, i, j, k, n,
+    {
+        hweno_restrict_z(i, j, k, n, tmpzarr, finearr, ratio, hz_f, hz_c);
+    });
+#endif
+
+#if (AMREX_SPACEDIM >= 2)
+    Box by = amrex::refine(target_crse_region, IntVect(AMREX_D_DECL(ratio[0],1,1)));
+    by.grow(IntVect(AMREX_D_DECL(ratio[0],0,0)));
+    FArrayBox tmpy(by, ncomp);
+#ifdef AMREX_USE_GPU
+    Elixir tmpy_eli;
+    if (run_on_gpu) { tmpy_eli = tmpy.elixir(); }
+#endif
+    Array4<Real> const& tmpyarr = tmpy.array();
+#if (AMREX_SPACEDIM == 2)
+    Array4<Real const> srcarr = finearr;
+#else
+    Array4<Real const> srcarr = tmpz.const_array(); // TODO(hweno-restrict-3d): add z-stage.
+#endif
+
+    const Real hy_f = fine_geom.CellSize(1);
+    const Real hy_c = crse_geom.CellSize(1);
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, ncomp/sd_space_hweno, i, j, k, n,
+    {
+        hweno_restrict_y(i, j, k, n, tmpyarr, srcarr, ratio, hy_f, hy_c);
+    });
+
+#endif
+
+#if (AMREX_SPACEDIM == 1)
+    Array4<Real const> srcarr = finearr;
+#else
+    srcarr = tmpy.const_array();
+#endif
+    const Real hx_f = fine_geom.CellSize(0);
+    const Real hx_c = crse_geom.CellSize(0);
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_crse_region, ncomp/sd_space_hweno, i, j, k, n,
+    {
+        hweno_restrict_x(i, j, k, n, crsearr, srcarr, ratio, hx_f, hx_c);
+    });
+
 }
 
 }

@@ -1551,6 +1551,35 @@ private:
     }
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static GpuArray<GpuArray<Real,3>, 3> Build3Candidates (
+        Real um, Real u0, Real up,
+        Real gm, Real gp,
+        Real h) noexcept
+    {
+        const Real hg_m = h * gm;
+        const Real hg_p = h * gp;
+
+        GpuArray<GpuArray<Real,3>, 3> c{};
+
+        // p0: {u_{i-1}, u_i, g_{i-1}}
+        c[0][0] =  Real(1.0/12.0)*um + Real(11.0/12.0)*u0 + Real(1.0/12.0)*hg_m;
+        c[0][1] = -Real(2.0)*um + Real(2.0)*u0 - hg_m;
+        c[0][2] = -um + u0 - hg_m;
+
+        // p1: {u_{i-1}, u_i, u_{i+1}}
+        c[1][0] = -Real(1.0/24.0)*um + Real(13.0/12.0)*u0 - Real(1.0/24.0)*up;
+        c[1][1] = -Real(1.0/2.0)*um + Real(1.0/2.0)*up;
+        c[1][2] =  Real(1.0/2.0)*um - u0 + Real(1.0/2.0)*up;
+
+        // p2: {u_i, u_{i+1}, g_{i+1}}
+        c[2][0] =  Real(11.0/12.0)*u0 + Real(1.0/12.0)*up - Real(1.0/12.0)*hg_p;
+        c[2][1] = -Real(2.0)*u0 + Real(2.0)*up - hg_p;
+        c[2][2] =  u0 - up + hg_p;
+
+        return c;
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     static Real BetaFromCubic (GpuArray<Real,4> const& c, SmoothRegion region) noexcept
     {
         if (region == SmoothRegion::Parent) {
@@ -1597,9 +1626,53 @@ private:
     }
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static Real BetaFromQuadratic (GpuArray<Real,3> const& c, SmoothRegion region) noexcept
+    {
+        if (region == SmoothRegion::Parent) {
+            return c[1]*c[1] + Real(13.0/3.0)*c[2]*c[2];
+        }
+
+        const Real sign = (region == SmoothRegion::ChildLeft) ? Real(-1.0) : Real(1.0);
+        return Real(1.0/2.0)*c[1]*c[1]
+             + Real(13.0/6.0)*c[2]*c[2]
+             + sign*Real(1.0/2.0)*c[1]*c[2];
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static GpuArray<Real,3> ZWeights3 (GpuArray<Real,3> const& beta) noexcept
+    {
+        constexpr GpuArray<Real,3> d = {
+            Real(1.0/4.0), Real(1.0/2.0), Real(1.0/4.0)
+        };
+
+        const Real diff = beta[0] - beta[2];
+        const Real tau = (diff >= Real(0.0)) ? diff : -diff;
+        GpuArray<Real,3> alpha{};
+        Real sum_alpha = Real(0.0);
+        for (int k = 0; k < 3; ++k) {
+            const Real r = tau / (beta[k] + hweno_eps);
+            alpha[k] = d[k] * (Real(1.0) + r * r); // p=2 fixed
+            sum_alpha += alpha[k];
+        }
+
+        const Real inv = Real(1.0) / amrex::max(sum_alpha, Real(1.0e-30));
+        GpuArray<Real,3> w{};
+        for (int k = 0; k < 3; ++k) {
+            w[k] = alpha[k] * inv;
+        }
+        return w;
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     static Real EvalCubic (GpuArray<Real,4> const& b, Real xi) noexcept
     {
         return ((b[3]*xi + b[2])*xi + b[1])*xi + b[0];
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static Real EvalQuadratic (GpuArray<Real,3> const& b, Real xi) noexcept
+    {
+        return (b[2]*xi + b[1])*xi + b[0];
     }
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
@@ -1612,6 +1685,18 @@ private:
     static Real P1DProjX (int child, int s, int q) noexcept
     {
         return Mortar2D::Px2D_prol[child][s][q];
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static Real P1DRestrictY (int child, int q, int s) noexcept
+    {
+        return Mortar2D::Py2D[child][q][s];
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static Real P1DRestrictX (int child, int s, int q) noexcept
+    {
+        return Mortar2D::Px2D[child][s][q];
     }
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
@@ -1648,14 +1733,16 @@ private:
                                 Array4<Real> const& tmparr,
                                 Array4<Real const> const& srcarr,
                                 IntVect const& ratio,
-                                Real hdir) noexcept;
+                                Real hdir,
+                                Real eos_gamma) noexcept;
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     static void hweno_interp_x (int i, int j, int k, int n,
                                 Array4<Real> const& finearr,
                                 Array4<Real const> const& srcarr,
                                 IntVect const& ratio,
-                                Real hdir) noexcept;
+                                Real hdir,
+                                Real eos_gamma) noexcept;
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     static void hweno_restrict_z (int i, int j, int k, int n,
@@ -1671,7 +1758,10 @@ private:
                                   Array4<Real const> const& srcarr,
                                   IntVect const& ratio,
                                   Real hfine,
-                                  Real hcrse) noexcept;
+                                  Real hcrse,
+                                  Real eos_gamma,
+                                  int j_valid_lo,
+                                  int j_valid_hi) noexcept;
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     static void hweno_restrict_x (int i, int j, int k, int n,
@@ -1679,7 +1769,10 @@ private:
                                   Array4<Real const> const& srcarr,
                                   IntVect const& ratio,
                                   Real hfine,
-                                  Real hcrse) noexcept;
+                                  Real hcrse,
+                                  Real eos_gamma,
+                                  int i_valid_lo,
+                                  int i_valid_hi) noexcept;
 };
 
 //! CONSTRUCT A GLOBAL OBJECT OF EACH VERSION.

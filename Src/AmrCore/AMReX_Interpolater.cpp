@@ -52,137 +52,7 @@ Mortar2D                  mortar_interp_orderRef;
 Mortar2D                  mortar_interp_scaleRef(Mortar2D::Type::ScaleRef);
 HermiteWENO2D             hermite_weno_interp;
 
-namespace
-{
-    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-    int hweno_hydro_comp (int hidx) noexcept
-    {
-        return (hidx == 0) ? MRHO
-             : (hidx == 1) ? MU
-             : (hidx == 2) ? MV
-             : (hidx == 3) ? MW
-                           : ME;
-    }
-
-    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-    bool hweno_is_hydro_comp (int n) noexcept
-    {
-        return (n == MRHO || n == MU || n == MV || n == MW || n == ME);
-    }
-
-    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-    void hweno_build_eigensystem_ideal5 (
-        GpuArray<GpuArray<Real,5>,5>& L,
-        GpuArray<GpuArray<Real,5>,5>& R,
-        GpuArray<Real,5>& lambda,
-        GpuArray<Real,5> const& U,
-        int idim, Real gamma) noexcept
-    {
-        const int m1 = (idim == 0) ? 1 : 2;
-        const int m2 = (idim == 0) ? 2 : 1;
-        const int m3 = 3;
-
-        const Real rho = amrex::max(U[0], Real(1.0e-12));
-        const Real inv_rho = Real(1.0) / rho;
-        const Real un = U[m1] * inv_rho;
-        const Real ut = U[m2] * inv_rho;
-        const Real uw = U[m3] * inv_rho;
-        const Real q2 = un*un + ut*ut + uw*uw;
-        const Real p = amrex::max((gamma - Real(1.0)) * (U[4] - Real(0.5) * rho * q2), Real(1.0e-14));
-        const Real H = (U[4] + p) * inv_rho;
-        const Real c2 = amrex::max((gamma - Real(1.0)) * (H - Real(0.5) * q2), Real(1.0e-14));
-        const Real c = std::sqrt(c2);
-        const Real g1 = gamma - Real(1.0);
-        const Real mu = Real(0.5) * g1 * q2;
-
-        for (int a = 0; a < 5; ++a) {
-            lambda[a] = un;
-            for (int b = 0; b < 5; ++b) {
-                L[a][b] = Real(0.0);
-                R[a][b] = Real(0.0);
-            }
-        }
-        lambda[0] = un - c;
-        lambda[4] = un + c;
-
-        R[0][0] = Real(1.0);
-        R[m1][0] = un - c;
-        R[m2][0] = ut;
-        R[m3][0] = uw;
-        R[4][0] = H - un*c;
-
-        R[0][1] = Real(1.0);
-        R[m1][1] = un;
-        R[m2][1] = ut;
-        R[m3][1] = uw;
-        R[4][1] = q2 - mu/g1;
-
-        R[m2][2] = Real(1.0);
-        R[4][2] = ut;
-
-        R[m3][3] = Real(1.0);
-        R[4][3] = uw;
-
-        R[0][4] = Real(1.0);
-        R[m1][4] = un + c;
-        R[m2][4] = ut;
-        R[m3][4] = uw;
-        R[4][4] = H + un*c;
-
-        L[0][0] = Real(0.5) * (mu + un*c);
-        L[0][m1] = -Real(0.5) * g1 * un - Real(0.5) * c;
-        L[0][m2] = -Real(0.5) * g1 * ut;
-        L[0][m3] = -Real(0.5) * g1 * uw;
-        L[0][4] = Real(0.5) * g1;
-
-        L[1][0] = c2 - mu;
-        L[1][m1] = g1 * un;
-        L[1][m2] = g1 * ut;
-        L[1][m3] = g1 * uw;
-        L[1][4] = -g1;
-
-        L[2][0] = -c2 * ut;
-        L[2][m2] = c2;
-
-        L[3][0] = -c2 * uw;
-        L[3][m3] = c2;
-
-        L[4][0] = Real(0.5) * (mu - un*c);
-        L[4][m1] = -Real(0.5) * g1 * un + Real(0.5) * c;
-        L[4][m2] = -Real(0.5) * g1 * ut;
-        L[4][m3] = -Real(0.5) * g1 * uw;
-        L[4][4] = Real(0.5) * g1;
-
-        const Real inv_c2 = Real(1.0) / c2;
-        for (int i = 0; i < 5; ++i) {
-            for (int j = 0; j < 5; ++j) {
-                L[i][j] *= inv_c2;
-            }
-        }
-    }
-
-    AMREX_FORCE_INLINE
-    void hweno_get_positivity_params (Real& eos_gamma, Real& smallr, Real& smallp)
-    {
-        static bool inited = false;
-        static Real s_gamma = Real(1.4);
-        static Real s_smallr = Real(1.0e-10);
-        static Real s_smallp = Real(1.0e-10);
-
-        if (!inited) {
-            ParmParse pp("Navier-Stokes");
-            pp.query("visc_EOSgamma", s_gamma);
-            pp.query("visc_smallr", s_smallr);
-            pp.query("visc_smallp", s_smallp);
-            s_smallr = amrex::max(s_smallr, Real(1.0e-10));
-            s_smallp = amrex::max(s_smallp, Real(1.0e-10));
-            inited = true;
-        }
-
-        eos_gamma = s_gamma;
-        smallr = s_smallr;
-        smallp = s_smallp;
-    }
+namespace{
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     Real hweno_pressure_ideal (Real rho, Real mx, Real my, Real mz, Real e, Real gamma) noexcept
@@ -286,7 +156,6 @@ namespace
         }
     }
 }
-
 
 Box
 NodeBilinear::CoarseBox (const Box& fine,
@@ -2525,55 +2394,25 @@ HermiteWENO2D::hweno_interp_y (int i, int j, int k, int n,
     const SmoothRegion region = (child == 0) ? SmoothRegion::ChildLeft
                                              : SmoothRegion::ChildRight;
     for (int line = 0; line < sd_order_hweno; ++line) {
-        GpuArray<Moments1D,5> mm_h{}, m0_h{}, mp_h{};
-        for (int h = 0; h < 5; ++h) {
-            GpuArray<Real,sd_order_hweno> Um{}, U0{}, Up{};
-            const int comp = hweno_hydro_comp(h);
-            for (int s = 0; s < sd_order_hweno; ++s) {
-                const int off = box2point(line, s, 0, comp); // y-dir: line is x-node
-                Um[s] = srcarr(ivm[0], ivm[1], ivm[2], off);
-                U0[s] = srcarr(ivc[0], ivc[1], ivc[2], off);
-                Up[s] = srcarr(ivp[0], ivp[1], ivp[2], off);
-            }
-            mm_h[h] = NodalToMoments1D(Um.data(), hdir);
-            m0_h[h] = NodalToMoments1D(U0.data(), hdir);
-            mp_h[h] = NodalToMoments1D(Up.data(), hdir);
+        GpuArray<Real,sd_order_hweno> Um{}, U0{}, Up{};
+        for (int s = 0; s < sd_order_hweno; ++s) {
+            const int off = box2point(line, s, 0, n); // y-dir: line is x-node
+            Um[s] = srcarr(ivm[0], ivm[1], ivm[2], off);
+            U0[s] = srcarr(ivc[0], ivc[1], ivc[2], off);
+            Up[s] = srcarr(ivp[0], ivp[1], ivp[2], off);
         }
 
-        GpuArray<Real,5> Ubar0{};
-        Ubar0[0] = m0_h[0].ubar;
-        Ubar0[1] = m0_h[1].ubar;
-        Ubar0[2] = m0_h[2].ubar;
-        Ubar0[3] = m0_h[3].ubar;
-        Ubar0[4] = m0_h[4].ubar;
+        const auto mm = NodalToMoments1D(Um.data(), hdir);
+        const auto m0 = NodalToMoments1D(U0.data(), hdir);
+        const auto mp = NodalToMoments1D(Up.data(), hdir);
+        const auto cand = Build4Candidates(mm.ubar, m0.ubar, mp.ubar,
+                                           mm.g1, mp.g1, mm.g2, mp.g2, hdir);
 
-        GpuArray<GpuArray<Real,5>,5> L{}, R{};
-        GpuArray<Real,5> lambda{};
-        hweno_build_eigensystem_ideal5(L, R, lambda, Ubar0, 1, eos_gamma);
-
-        GpuArray<GpuArray<Real,3>,5> bH_hydro{};
-        for (int a = 0; a < 5; ++a) {
-            Real um = Real(0.0), u0 = Real(0.0), up = Real(0.0);
-            Real gm = Real(0.0), gp = Real(0.0);
-            for (int h = 0; h < 5; ++h) {
-                um += L[a][h] * mm_h[h].ubar;
-                u0 += L[a][h] * m0_h[h].ubar;
-                up += L[a][h] * mp_h[h].ubar;
-                gm += L[a][h] * mm_h[h].g1;
-                gp += L[a][h] * mp_h[h].g1;
-            }
-            const auto cand = Build3Candidates(um, u0, up, gm, gp, hdir);
-            GpuArray<Real,3> beta{};
-            for (int kk = 0; kk < 3; ++kk) {
-                beta[kk] = BetaFromQuadratic(cand[kk], region);
-            }
-            const auto omega = ZWeights3(beta);
-            for (int m = 0; m < 3; ++m) {
-                for (int kk = 0; kk < 3; ++kk) {
-                    bH_hydro[a][m] += omega[kk] * cand[kk][m];
-                }
-            }
+        GpuArray<Real,4> beta{};
+        for (int kk = 0; kk < 4; ++kk) {
+            beta[kk] = BetaFromCubic(cand[kk], SmoothRegion::Parent);
         }
+        const auto omega = ZWeights(beta);
 
         GpuArray<GpuArray<Real,3>,5> bH_cons{};
         for (int h = 0; h < 5; ++h) {
@@ -2660,55 +2499,25 @@ HermiteWENO2D::hweno_interp_x (int i, int j, int k, int n,
     const SmoothRegion region = (child == 0) ? SmoothRegion::ChildLeft
                                              : SmoothRegion::ChildRight;
     for (int line = 0; line < sd_order_hweno; ++line) {
-        GpuArray<Moments1D,5> mm_h{}, m0_h{}, mp_h{};
-        for (int h = 0; h < 5; ++h) {
-            GpuArray<Real,sd_order_hweno> Um{}, U0{}, Up{};
-            const int comp = hweno_hydro_comp(h);
-            for (int s = 0; s < sd_order_hweno; ++s) {
-                const int off = box2point(s, line, 0, comp); // x-dir: line is y-node
-                Um[s] = srcarr(ivm[0], ivm[1], ivm[2], off);
-                U0[s] = srcarr(ivc[0], ivc[1], ivc[2], off);
-                Up[s] = srcarr(ivp[0], ivp[1], ivp[2], off);
-            }
-            mm_h[h] = NodalToMoments1D(Um.data(), hdir);
-            m0_h[h] = NodalToMoments1D(U0.data(), hdir);
-            mp_h[h] = NodalToMoments1D(Up.data(), hdir);
+        GpuArray<Real,sd_order_hweno> Um{}, U0{}, Up{};
+        for (int s = 0; s < sd_order_hweno; ++s) {
+            const int off = box2point(s, line, 0, n); // x-dir: line is y-node
+            Um[s] = srcarr(ivm[0], ivm[1], ivm[2], off);
+            U0[s] = srcarr(ivc[0], ivc[1], ivc[2], off);
+            Up[s] = srcarr(ivp[0], ivp[1], ivp[2], off);
         }
 
-        GpuArray<Real,5> Ubar0{};
-        Ubar0[0] = m0_h[0].ubar;
-        Ubar0[1] = m0_h[1].ubar;
-        Ubar0[2] = m0_h[2].ubar;
-        Ubar0[3] = m0_h[3].ubar;
-        Ubar0[4] = m0_h[4].ubar;
+        const auto mm = NodalToMoments1D(Um.data(), hdir);
+        const auto m0 = NodalToMoments1D(U0.data(), hdir);
+        const auto mp = NodalToMoments1D(Up.data(), hdir);
+        const auto cand = Build4Candidates(mm.ubar, m0.ubar, mp.ubar,
+                                           mm.g1, mp.g1, mm.g2, mp.g2, hdir);
 
-        GpuArray<GpuArray<Real,5>,5> L{}, R{};
-        GpuArray<Real,5> lambda{};
-        hweno_build_eigensystem_ideal5(L, R, lambda, Ubar0, 0, eos_gamma);
-
-        GpuArray<GpuArray<Real,3>,5> bH_hydro{};
-        for (int a = 0; a < 5; ++a) {
-            Real um = Real(0.0), u0 = Real(0.0), up = Real(0.0);
-            Real gm = Real(0.0), gp = Real(0.0);
-            for (int h = 0; h < 5; ++h) {
-                um += L[a][h] * mm_h[h].ubar;
-                u0 += L[a][h] * m0_h[h].ubar;
-                up += L[a][h] * mp_h[h].ubar;
-                gm += L[a][h] * mm_h[h].g1;
-                gp += L[a][h] * mp_h[h].g1;
-            }
-            const auto cand = Build3Candidates(um, u0, up, gm, gp, hdir);
-            GpuArray<Real,3> beta{};
-            for (int kk = 0; kk < 3; ++kk) {
-                beta[kk] = BetaFromQuadratic(cand[kk], region);
-            }
-            const auto omega = ZWeights3(beta);
-            for (int m = 0; m < 3; ++m) {
-                for (int kk = 0; kk < 3; ++kk) {
-                    bH_hydro[a][m] += omega[kk] * cand[kk][m];
-                }
-            }
+        GpuArray<Real,4> beta{};
+        for (int kk = 0; kk < 4; ++kk) {
+            beta[kk] = BetaFromCubic(cand[kk], SmoothRegion::Parent);
         }
+        const auto omega = ZWeights(beta);
 
         GpuArray<GpuArray<Real,3>,5> bH_cons{};
         for (int h = 0; h < 5; ++h) {
@@ -3256,7 +3065,6 @@ HermiteWENO2D::interp (const FArrayBox& crse,
     Real eos_gamma = Real(1.4);
     Real eps_rho = Real(1.0e-10);
     Real eps_p = Real(1.0e-10);
-    hweno_get_positivity_params(eos_gamma, eps_rho, eps_p);
 
     Array4<Real const> const& carr = crse.const_array(crse_comp);
     Array4<Real>       const& farr = fine.array(fine_comp);
@@ -3296,14 +3104,12 @@ HermiteWENO2D::interp (const FArrayBox& crse,
     const Real hy = crse_geom.CellSize(1);
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, ncomp/sd_space_hweno, i, j, k, n,
     {
-        hweno_interp_y(i, j, k, n, tmpyarr, srcarr, ratio, hy, eos_gamma);
+        hweno_interp_y(i, j, k, n, tmpyarr, srcarr, ratio, hy);
     });
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, 1, i, j, k, n,
     {
-        amrex::ignore_unused(n);
         hweno_apply_positivity_cell(tmpyarr, i, j, k, nvar, eos_gamma, eps_rho, eps_p);
     });
-
 #endif
 
 #if (AMREX_SPACEDIM == 1)
@@ -3314,11 +3120,10 @@ HermiteWENO2D::interp (const FArrayBox& crse,
     const Real hx = crse_geom.CellSize(0);
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_fine_region, ncomp/sd_space_hweno, i, j, k, n,
     {
-        hweno_interp_x(i, j, k, n, farr, srcarr, ratio, hx, eos_gamma);
+        hweno_interp_x(i, j, k, n, farr, srcarr, ratio, hx);
     });
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_fine_region, 1, i, j, k, n,
     {
-        amrex::ignore_unused(n);
         hweno_apply_positivity_cell(farr, i, j, k, nvar, eos_gamma, eps_rho, eps_p);
     });
 }
@@ -3352,7 +3157,6 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
     Real eos_gamma = Real(1.4);
     Real eps_rho = Real(1.0e-10);
     Real eps_p = Real(1.0e-10);
-    hweno_get_positivity_params(eos_gamma, eps_rho, eps_p);
 
     Array4<Real const> const& finearr = fine.const_array(fine_comp);
     Array4<Real>       const& crsearr = crse.array(crse_comp);
@@ -3395,15 +3199,12 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
     const int j_valid_hi = target_crse_region.bigEnd(1);
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, ncomp/sd_space_hweno, i, j, k, n,
     {
-        hweno_restrict_y(i, j, k, n, tmpyarr, srcarr, ratio, hy_f, hy_c, eos_gamma,
-                         j_valid_lo, j_valid_hi);
+        hweno_restrict_y(i, j, k, n, tmpyarr, srcarr, ratio, hy_f, hy_c);
     });
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, 1, i, j, k, n,
     {
-        amrex::ignore_unused(n);
         hweno_apply_positivity_cell(tmpyarr, i, j, k, nvar, eos_gamma, eps_rho, eps_p);
     });
-
 #endif
 
 #if (AMREX_SPACEDIM == 1)
@@ -3417,15 +3218,12 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
     const int i_valid_hi = target_crse_region.bigEnd(0);
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_crse_region, ncomp/sd_space_hweno, i, j, k, n,
     {
-        hweno_restrict_x(i, j, k, n, crsearr, srcarr, ratio, hx_f, hx_c, eos_gamma,
-                         i_valid_lo, i_valid_hi);
+        hweno_restrict_x(i, j, k, n, crsearr, srcarr, ratio, hx_f, hx_c);
     });
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_crse_region, 1, i, j, k, n,
     {
-        amrex::ignore_unused(n);
         hweno_apply_positivity_cell(crsearr, i, j, k, nvar, eos_gamma, eps_rho, eps_p);
     });
-
 }
 
 }

@@ -1407,7 +1407,7 @@ class HermiteWENO2D
 public:
     static constexpr int sd_order_hweno = 5;
     static constexpr int sd_space_hweno = 25;
-    static constexpr Real hweno_eps = Real(1.0e-12);
+    static constexpr Real hweno_eps = Real(1.0e-40);
 
     struct Moments1D
     {
@@ -1626,38 +1626,23 @@ private:
     }
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-    static Real BetaFromQuadratic (GpuArray<Real,3> const& c, SmoothRegion region) noexcept
+    static GpuArray<Real,4> JSWeights (GpuArray<Real,4> const& beta) noexcept
     {
-        if (region == SmoothRegion::Parent) {
-            return c[1]*c[1] + Real(13.0/3.0)*c[2]*c[2];
-        }
-
-        const Real sign = (region == SmoothRegion::ChildLeft) ? Real(-1.0) : Real(1.0);
-        return Real(1.0/2.0)*c[1]*c[1]
-             + Real(13.0/6.0)*c[2]*c[2]
-             + sign*Real(1.0/2.0)*c[1]*c[2];
-    }
-
-    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-    static GpuArray<Real,3> ZWeights3 (GpuArray<Real,3> const& beta) noexcept
-    {
-        constexpr GpuArray<Real,3> d = {
-            Real(1.0/4.0), Real(1.0/2.0), Real(1.0/4.0)
+        constexpr GpuArray<Real,4> d = {
+            Real(3.0/8.0), Real(3.0/8.0), Real(1.0/8.0), Real(1.0/8.0)
         };
 
-        const Real diff = beta[0] - beta[2];
-        const Real tau = (diff >= Real(0.0)) ? diff : -diff;
-        GpuArray<Real,3> alpha{};
+        GpuArray<Real,4> alpha{};
         Real sum_alpha = Real(0.0);
-        for (int k = 0; k < 3; ++k) {
-            const Real r = tau / (beta[k] + hweno_eps);
-            alpha[k] = d[k] * (Real(1.0) + r * r); // p=2 fixed
+        for (int k = 0; k < 4; ++k) {
+            const Real den = beta[k] + hweno_eps;
+            alpha[k] = d[k] / (den * den); // classical JS, power=2
             sum_alpha += alpha[k];
         }
 
         const Real inv = Real(1.0) / amrex::max(sum_alpha, Real(1.0e-30));
-        GpuArray<Real,3> w{};
-        for (int k = 0; k < 3; ++k) {
+        GpuArray<Real,4> w{};
+        for (int k = 0; k < 4; ++k) {
             w[k] = alpha[k] * inv;
         }
         return w;

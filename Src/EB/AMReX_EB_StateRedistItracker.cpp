@@ -8,6 +8,119 @@
 
 namespace amrex {
 
+template <int N>
+AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+bool
+StateRedistCandidateIsValid (
+    int candidate, int i, int j, int k,
+    Array<int,N> const& imap, Array<int,N> const& jmap,
+    Array<int,N> const& kmap, Array4<Real const> const& vfrac,
+    Box const& domain, bool is_periodic_x, bool is_periodic_y,
+    bool is_periodic_z) noexcept
+{
+    const int ii = i + imap[candidate];
+    const int jj = j + jmap[candidate];
+    const int kk = k + kmap[candidate];
+
+    const bool in_domain =
+        (is_periodic_x ||
+         (ii >= domain.smallEnd(0) && ii <= domain.bigEnd(0))) &&
+        (is_periodic_y ||
+         (jj >= domain.smallEnd(1) && jj <= domain.bigEnd(1))) &&
+        (is_periodic_z ||
+         (kk >= domain.smallEnd(2) && kk <= domain.bigEnd(2)));
+
+    return in_domain && vfrac(ii,jj,kk) > Real(0.0);
+}
+
+template <int N>
+AMREX_GPU_DEVICE AMREX_FORCE_INLINE
+bool
+StateRedistCandidateIsSelected (
+    int candidate, int i, int j, int k,
+    Array4<int> const& itracker, int num_selected) noexcept
+{
+    for (int n = 1; n <= num_selected; ++n) {
+        if (itracker(i,j,k,n) == candidate) {
+            return true;
+        }
+    }
+    return false;
+}
+
+template <int N>
+AMREX_GPU_DEVICE AMREX_FORCE_INLINE
+bool
+StateRedistCandidateIsUsable (
+    int candidate, bool faces_only, int i, int j, int k,
+    Array<int,N> const& imap, Array<int,N> const& jmap,
+    Array<int,N> const& kmap, Array4<Real const> const& vfrac,
+    Array4<int> const& itracker, int num_selected, Box const& domain,
+    bool is_periodic_x, bool is_periodic_y, bool is_periodic_z) noexcept
+{
+    const int distance = std::abs(imap[candidate]) +
+        std::abs(jmap[candidate]) + std::abs(kmap[candidate]);
+    return (!faces_only || distance == 1) &&
+        !StateRedistCandidateIsSelected<N>(candidate, i, j, k, itracker,
+                                            num_selected) &&
+        StateRedistCandidateIsValid<N>(candidate, i, j, k, imap, jmap, kmap,
+                                        vfrac, domain, is_periodic_x,
+                                        is_periodic_y, is_periodic_z);
+}
+
+template <int N>
+AMREX_GPU_DEVICE AMREX_FORCE_INLINE
+int
+StateRedistFindValidCandidate (
+    int preferred, bool faces_only, int i, int j, int k,
+    Array<int,N> const& imap, Array<int,N> const& jmap,
+    Array<int,N> const& kmap, Array4<Real const> const& vfrac,
+    Array4<int> const& itracker, int num_selected, Box const& domain,
+    bool is_periodic_x, bool is_periodic_y, bool is_periodic_z,
+    Real nx, Real ny, Real nz) noexcept
+{
+    if (preferred > 0 && preferred < N &&
+        StateRedistCandidateIsUsable<N>(
+            preferred, faces_only, i, j, k, imap, jmap, kmap, vfrac,
+            itracker, num_selected, domain, is_periodic_x, is_periodic_y,
+            is_periodic_z)) {
+        return preferred;
+    }
+
+    if (preferred > 0 && preferred < N) {
+        for (int candidate = 1; candidate < N; ++candidate) {
+            if (imap[candidate] == -imap[preferred] &&
+                jmap[candidate] == -jmap[preferred] &&
+                kmap[candidate] == -kmap[preferred] &&
+                StateRedistCandidateIsUsable<N>(
+                    candidate, faces_only, i, j, k, imap, jmap, kmap,
+                    vfrac, itracker, num_selected, domain, is_periodic_x,
+                    is_periodic_y, is_periodic_z)) {
+                return candidate;
+            }
+        }
+    }
+
+    int best_candidate = 0;
+    Real best_score = Real(-1.e30);
+    for (int candidate = 1; candidate < N; ++candidate) {
+        if (StateRedistCandidateIsUsable<N>(
+                candidate, faces_only, i, j, k, imap, jmap, kmap, vfrac,
+                itracker, num_selected, domain, is_periodic_x,
+                is_periodic_y, is_periodic_z)) {
+            const Real score = nx * Real(imap[candidate]) +
+                ny * Real(jmap[candidate]) + nz * Real(kmap[candidate]);
+            if (score > best_score ||
+                (score == best_score && candidate < best_candidate)) {
+                best_candidate = candidate;
+                best_score = score;
+            }
+        }
+    }
+
+    return best_candidate;
+}
+
 #if (AMREX_SPACEDIM == 2)
 
 void
@@ -40,6 +153,7 @@ MakeITracker ( Box const& bx,
     // Note the first component of imap/jmap should never be used
     Array<int,9> imap{0,-1,0,1,-1,1,-1,0,1};
     Array<int,9> jmap{0,-1,-1,-1,0,0,1,1,1};
+    Array<int,9> kmap{0,0,0,0,0,0,0,0,0};
 
     const auto& is_periodic_x = lev_geom.isPeriodic(0);
     const auto& is_periodic_y = lev_geom.isPeriodic(1);
@@ -110,17 +224,19 @@ MakeITracker ( Box const& bx,
                itracker(i,j,k,1) = (nx > 0) ? 5 : 4;
            }
 
-           // (i,j) merges with at least one cell now
-           itracker(i,j,k,0) += 1;
+           const int first_candidate = StateRedistFindValidCandidate<9>(
+               itracker(i,j,k,1), true, i, j, k, imap, jmap,
+               kmap, vfrac, itracker, 0,
+               domain, is_periodic_x, is_periodic_y, false, nx, ny, 0.0);
+           if (first_candidate == 0) {
+               amrex::Abort("Couldnt find a valid StateRedist neighbor");
+           }
+           itracker(i,j,k,1) = first_candidate;
+           itracker(i,j,k,0) = 1;
 
            // (i+ioff,j+joff) is in the nbhd of (i,j)
-           int ioff = imap[itracker(i,j,k,1)];
-           int joff = jmap[itracker(i,j,k,1)];
-
-           // Sanity check
-           if (vfrac(i+ioff,j+joff,k) == 0.) {
-               amrex::Abort(" Trying to merge with covered cell");
-           }
+           int ioff = imap[first_candidate];
+           int joff = jmap[first_candidate];
 
            Real sum_vol = vfrac(i,j,k) + vfrac(i+ioff,j+joff,k);
 
@@ -141,12 +257,10 @@ MakeITracker ( Box const& bx,
                    if (nx >= 0 && xdir_pls_ok)
                    {
                        itracker(i,j,k,2) = 5;
-                       itracker(i,j,k,0) += 1;
                    }
                    else if (nx <= 0 && xdir_mns_ok)
                    {
                        itracker(i,j,k,2) = 4;
-                       itracker(i,j,k,0) += 1;
                    }
 
                // Original offset was in x-direction, so we will add to the y-direction
@@ -155,20 +269,23 @@ MakeITracker ( Box const& bx,
                    if (ny >= 0 && ydir_pls_ok)
                    {
                        itracker(i,j,k,2) = 7;
-                       itracker(i,j,k,0) += 1;
                    }
                    else if (ny <= 0 && ydir_mns_ok)
                    {
                        itracker(i,j,k,2) = 2;
-                       itracker(i,j,k,0) += 1;
                    }
                }
 
-               if (itracker(i,j,k,0) > 1)
+               const int second_candidate = StateRedistFindValidCandidate<9>(
+                   itracker(i,j,k,2), true, i, j, k, imap, jmap,
+                   kmap, vfrac, itracker, 1,
+                   domain, is_periodic_x, is_periodic_y, false, nx, ny, 0.0);
+               if (second_candidate > 0)
                {
-                   // (i+ioff2,j+joff2) is in the nbhd of (i,j)
-                   int ioff2 = imap[itracker(i,j,k,2)];
-                   int joff2 = jmap[itracker(i,j,k,2)];
+                   itracker(i,j,k,2) = second_candidate;
+                   itracker(i,j,k,0) = 2;
+                   const int ioff2 = imap[second_candidate];
+                   const int joff2 = jmap[second_candidate];
 
                    sum_vol += vfrac(i+ioff2,j+joff2,k);
 #if 0
@@ -198,10 +315,16 @@ MakeITracker ( Box const& bx,
                    itracker(i,j,k,3) = 1;
                }
 
-               // (i,j) merges with at least three cells now
-               itracker(i,j,k,0) += 1;
-
-               sum_vol += vfrac(i+ioff,j+joff,k);
+               const int corner_candidate = StateRedistFindValidCandidate<9>(
+                   itracker(i,j,k,3), false, i, j, k, imap, jmap,
+                   kmap, vfrac, itracker, 2,
+                   domain, is_periodic_x, is_periodic_y, false, nx, ny, 0.0);
+               if (corner_candidate > 0) {
+                   itracker(i,j,k,3) = corner_candidate;
+                   itracker(i,j,k,0) = 3;
+                   sum_vol += vfrac(i+imap[corner_candidate],
+                                    j+jmap[corner_candidate],k);
+               }
 #if 0
                if (debug_verbose > 0)
                    amrex::Print() << "Cell " << IntVect(i,j) << " with volfrac " << vfrac(i,j,k) <<
@@ -209,6 +332,22 @@ MakeITracker ( Box const& bx,
                                      " with volfrac " << vfrac(i+ioff,j+joff,k) <<
                                      " to get new sum_vol " <<  sum_vol << '\n';
 #endif
+           }
+           while (sum_vol < target_volfrac && itracker(i,j,k,0) < 3)
+           {
+               const int fallback_candidate = StateRedistFindValidCandidate<9>(
+                   0, false, i, j, k, imap, jmap,
+                   kmap, vfrac, itracker,
+                   itracker(i,j,k,0), domain, is_periodic_x, is_periodic_y,
+                   false, nx, ny, 0.0);
+               if (fallback_candidate == 0) {
+                   break;
+               }
+               const int next_slot = itracker(i,j,k,0) + 1;
+               itracker(i,j,k,next_slot) = fallback_candidate;
+               itracker(i,j,k,0) = next_slot;
+               sum_vol += vfrac(i+imap[fallback_candidate],
+                                j+jmap[fallback_candidate],k);
            }
            if (sum_vol < target_volfrac)
            {
@@ -373,20 +512,20 @@ MakeITracker ( Box const& bx,
                }
            }
 
-           // (i,j,k) merges with at least one cell now
-           itracker(i,j,k,0) += 1;
+           const int first_candidate = StateRedistFindValidCandidate<27>(
+               itracker(i,j,k,1), true, i, j, k, imap, jmap, kmap, vfrac,
+               itracker, 0, domain, is_periodic_x, is_periodic_y,
+               is_periodic_z, nx, ny, nz);
+           if (first_candidate == 0) {
+               amrex::Abort("Couldnt find a valid StateRedist neighbor");
+           }
+           itracker(i,j,k,1) = first_candidate;
+           itracker(i,j,k,0) = 1;
 
            // (i+ioff,j+joff,k+koff) is now the first cell in the nbhd of (i,j,k)
-           int ioff = imap[itracker(i,j,k,1)];
-           int joff = jmap[itracker(i,j,k,1)];
-           int koff = kmap[itracker(i,j,k,1)];
-
-           // Sanity check
-           if (vfrac(i+ioff,j+joff,k+koff) == 0.)
-           {
-               // amrex::Print() << "Cell " << IntVect(i,j,k) << " is trying to merge with cell " << IntVect(i+ioff,j+joff,k+koff) << '\n';
-               amrex::Abort(" Trying to merge with covered cell");
-           }
+           int ioff = imap[first_candidate];
+           int joff = jmap[first_candidate];
+           int koff = kmap[first_candidate];
 
            Real sum_vol = vfrac(i,j,k) + vfrac(i+ioff,j+joff,k+koff);
 
@@ -448,15 +587,18 @@ MakeITracker ( Box const& bx,
                    }
                }
 
-               // (i,j,k) merges with at least two cells now
-               itracker(i,j,k,0) += 1;
-
-               // (i+ioff2,j+joff2,k+koff2) is in the nbhd of (i,j,k)
-               int ioff2 = imap[itracker(i,j,k,2)];
-               int joff2 = jmap[itracker(i,j,k,2)];
-               int koff2 = kmap[itracker(i,j,k,2)];
-
-               sum_vol += vfrac(i+ioff2,j+joff2,k+koff2);
+               const int second_candidate = StateRedistFindValidCandidate<27>(
+                   itracker(i,j,k,2), true, i, j, k, imap, jmap, kmap,
+                   vfrac, itracker, 1, domain, is_periodic_x, is_periodic_y,
+                   is_periodic_z, nx, ny, nz);
+               if (second_candidate > 0) {
+                   itracker(i,j,k,2) = second_candidate;
+                   itracker(i,j,k,0) = 2;
+                   const int ioff2 = imap[second_candidate];
+                   const int joff2 = jmap[second_candidate];
+                   const int koff2 = kmap[second_candidate];
+                   sum_vol += vfrac(i+ioff2,j+joff2,k+koff2);
+               }
 #if 0
                if (debug_print)
                    amrex::Print() << "Cell " << IntVect(i,j,k) << " with volfrac " << vfrac(i,j,k) <<
@@ -512,10 +654,17 @@ MakeITracker ( Box const& bx,
                    }
                }
 
-               // (i,j,k) merges with at least three cells now
-               itracker(i,j,k,0) += 1;
-
-               sum_vol += vfrac(i+ioff,j+joff,k+koff);
+               const int corner_candidate = StateRedistFindValidCandidate<27>(
+                   itracker(i,j,k,3), false, i, j, k, imap, jmap, kmap,
+                   vfrac, itracker, 2, domain, is_periodic_x, is_periodic_y,
+                   is_periodic_z, nx, ny, nz);
+               if (corner_candidate > 0) {
+                   itracker(i,j,k,3) = corner_candidate;
+                   itracker(i,j,k,0) = 3;
+                   sum_vol += vfrac(i+imap[corner_candidate],
+                                    j+jmap[corner_candidate],
+                                    k+kmap[corner_candidate]);
+               }
 
 #if 0
                int ioff3 = imap[itracker(i,j,k,3)];
@@ -535,7 +684,8 @@ MakeITracker ( Box const& bx,
                // If with a nbhd of four cells we have still not reached vfrac > target_volfrac, we add another four
                //    cells to the nbhd to make a 2x2x2 block.  We use the direction of the remaining
                //    normal to know whether to go lo or hi in the new direction.
-               if (sum_vol < target_volfrac || just_broke_symmetry)
+               if (itracker(i,j,k,0) == 3 &&
+                   (sum_vol < target_volfrac || just_broke_symmetry))
                {
 #if 0
                    if (debug_print)
@@ -703,11 +853,21 @@ MakeITracker ( Box const& bx,
                        }
                    }
 
-                   for(int n(4); n<8; n++){
-                     int ioffn = imap[itracker(i,j,k,n)];
-                     int joffn = jmap[itracker(i,j,k,n)];
-                     int koffn = kmap[itracker(i,j,k,n)];
-                     sum_vol += vfrac(i+ioffn,j+joffn,k+koffn);
+                   for (int n = 4; n < 8; ++n) {
+                     const int candidate = StateRedistFindValidCandidate<27>(
+                         itracker(i,j,k,n), false, i, j, k, imap, jmap,
+                         kmap, vfrac, itracker, itracker(i,j,k,0), domain,
+                         is_periodic_x, is_periodic_y, is_periodic_z,
+                         nx, ny, nz);
+                     if (candidate == 0) {
+                         continue;
+                     }
+                     const int next_slot = itracker(i,j,k,0) + 1;
+                     itracker(i,j,k,next_slot) = candidate;
+                     itracker(i,j,k,0) = next_slot;
+                     sum_vol += vfrac(i+imap[candidate],
+                                      j+jmap[candidate],
+                                      k+kmap[candidate]);
 #if 0
                      if (debug_print)
                        amrex::Print() << "Cell " << IntVect(i,j,k) << " with volfrac " << vfrac(i,j,k) <<
@@ -717,9 +877,23 @@ MakeITracker ( Box const& bx,
 #endif
                    }
 
-                   // (i,j,k) has a 2x2x2 neighborhood now
-                   itracker(i,j,k,0) += 4;
                }
+           }
+           while (sum_vol < target_volfrac && itracker(i,j,k,0) < 7)
+           {
+               const int fallback_candidate = StateRedistFindValidCandidate<27>(
+                   0, false, i, j, k, imap, jmap, kmap, vfrac, itracker,
+                   itracker(i,j,k,0), domain, is_periodic_x, is_periodic_y,
+                   is_periodic_z, nx, ny, nz);
+               if (fallback_candidate == 0) {
+                   break;
+               }
+               const int next_slot = itracker(i,j,k,0) + 1;
+               itracker(i,j,k,next_slot) = fallback_candidate;
+               itracker(i,j,k,0) = next_slot;
+               sum_vol += vfrac(i+imap[fallback_candidate],
+                                j+jmap[fallback_candidate],
+                                k+kmap[fallback_candidate]);
            }
            if (sum_vol < target_volfrac)
            {

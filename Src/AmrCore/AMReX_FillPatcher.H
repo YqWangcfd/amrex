@@ -614,8 +614,26 @@ void FillPatcher<MF>::fillRK (int stage, int iteration, int ncycle, MF& crse_mf,
 
     cbc(*m_cf_crse_data_tmp, 0, m_ncomp, m_cf_crse_data_tmp->nGrowVect(), time, 0); // m_cf_crse_data_tmp->nGrowVect() = 0, m_gnhost=6
 
+    // Preserve the dense-output coarse state for the space-time mortar path.
     crse_mf.ParallelCopy(*m_cf_crse_data_tmp, 0, 0, m_ncomp, IntVect(0), IntVect(0));
-    
+
+    // Project the same predicted coarse solution polynomial to the fine
+    // coarse-fine ghost region.  m_interp is the mapper supplied when this
+    // FillPatcher is constructed (mortar_interp_scaleRef for AMR-SD).
+    if (m_cf_fine_data == nullptr) {
+        m_cf_fine_data = std::make_unique<MF>
+            (detail::make_mf_fine_patch<MF>(fpc, m_ncomp));
+    }
+
+    FillPatchInterp(*m_cf_fine_data, 0, *m_cf_crse_data_tmp, 0,
+                    m_ncomp, IntVect(0), m_cgeom, m_fgeom,
+                    amrex::grow(amrex::convert(m_fgeom.Domain(),
+                                               mf.ixType()), m_nghost),
+                    m_ratio, m_interp, bcs, 0);
+
+    mf.ParallelCopy(*m_cf_fine_data, 0, 0, m_ncomp, IntVect(0), m_nghost);
+    mf.FillBoundary(m_fgeom.periodicity());
+
     fbc(mf, 0, m_ncomp, m_nghost, time, 0);
 
     // amrex::Print() << "m_nghost= " << m_nghost << std::endl;

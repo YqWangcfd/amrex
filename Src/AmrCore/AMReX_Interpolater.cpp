@@ -2401,8 +2401,11 @@ HermiteWENO2D::hweno_interp_y (int i, int j, int k, int n,
                                            mm.g1, mp.g1, mm.g2, mp.g2, hdir);
 
         GpuArray<Real,4> beta{};
-        const SmoothRegion region = (child == 0) ? SmoothRegion::ChildLeft
-                                                 : SmoothRegion::ChildRight;
+        // Both children of one coarse cell must use the same reconstructed
+        // parent polynomial.  Child-dependent nonlinear weights preserve the
+        // mean of each candidate over the full parent, but not the combined
+        // mean of the left and right half-cell projections.
+        const SmoothRegion region = SmoothRegion::Parent;
         for (int kk = 0; kk < 4; ++kk) {
             beta[kk] = BetaFromCubic(cand[kk], region);
         }
@@ -2485,8 +2488,9 @@ HermiteWENO2D::hweno_interp_x (int i, int j, int k, int n,
                                            mm.g1, mp.g1, mm.g2, mp.g2, hdir);
 
         GpuArray<Real,4> beta{};
-        const SmoothRegion region = (child == 0) ? SmoothRegion::ChildLeft
-                                                 : SmoothRegion::ChildRight;
+        // Use one parent polynomial for both children so their paired
+        // projections retain the coarse-cell average exactly.
+        const SmoothRegion region = SmoothRegion::Parent;
         for (int kk = 0; kk < 4; ++kk) {
             beta[kk] = BetaFromCubic(cand[kk], region);
         }

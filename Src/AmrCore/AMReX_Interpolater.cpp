@@ -54,104 +54,314 @@ HermiteWENO2D             hermite_weno_interp;
 namespace{
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-    Real hweno_pressure_ideal (Real rho, Real mx, Real my, Real mz, Real e, Real gamma) noexcept
+    Real amr_pp_internal_energy (Real rho, Real mx, Real my, Real mz, Real e) noexcept
     {
-        const Real rho_safe = amrex::max(rho, Real(1.0e-10));
-        const Real kinetic = Real(0.5) * (mx*mx + my*my + mz*mz) / rho_safe;
-        return (gamma - Real(1.0)) * (e - kinetic);
+        if (!(rho > Real(0.0)) || !amrex::Math::isfinite(rho)) {
+            return -AMREX_REAL_MAX;
+        }
+        return e - Real(0.5) * (mx*mx + my*my + mz*mz) / rho;
     }
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-    void hweno_apply_positivity_cell (Array4<Real> const& arr, int i, int j, int k, int nvar,
-                                      Real eos_gamma, Real eps_rho, Real eps_p) noexcept
+    Real amr_pp_lagrange_basis (int node, Real x) noexcept
     {
-        if (nvar <= ME) { return; }
-
-        auto sd_weight = [] AMREX_GPU_HOST_DEVICE (int off) noexcept -> Real
-        {
-            const int ix = off % sd_ORDER;
-            const int iy = (off / sd_ORDER) % sd_ORDER;
-#if (AMREX_SPACEDIM == 3)
-            const int iz = off / (sd_ORDER * sd_ORDER);
-            return SDwgh1D[ix] * SDwgh1D[iy] * SDwgh1D[iz];
-#else
-            return SDwgh1D[ix] * SDwgh1D[iy];
-#endif
-        };
-
-        Real rho_bar = Real(0.0);
-        Real mx_bar  = Real(0.0);
-        Real my_bar  = Real(0.0);
-        Real mz_bar  = Real(0.0);
-        Real e_bar   = Real(0.0);
-        for (int off = 0; off < HermiteWENO2D::sd_space_hweno; ++off) {
-            const Real w = sd_weight(off);
-            rho_bar += w * arr(i,j,k,MRHO*HermiteWENO2D::sd_space_hweno + off);
-            mx_bar  += w * arr(i,j,k,MU  *HermiteWENO2D::sd_space_hweno + off);
-            my_bar  += w * arr(i,j,k,MV  *HermiteWENO2D::sd_space_hweno + off);
-            mz_bar  += w * arr(i,j,k,MW  *HermiteWENO2D::sd_space_hweno + off);
-            e_bar   += w * arr(i,j,k,ME  *HermiteWENO2D::sd_space_hweno + off);
-        }
-
-        Real rho_min = AMREX_REAL_MAX;
-        for (int off = 0; off < HermiteWENO2D::sd_space_hweno; ++off) {
-            rho_min = amrex::min(rho_min, arr(i,j,k,MRHO*HermiteWENO2D::sd_space_hweno + off));
-        }
-
-        Real theta1 = Real(1.0);
-        if (rho_min < eps_rho) {
-            const Real denom = rho_bar - rho_min;
-            if (denom > Real(1.0e-30)) {
-                theta1 = amrex::min(Real(1.0), (rho_bar - eps_rho) / denom);
-            } else {
-                theta1 = Real(0.0);
+        Real value = Real(1.0);
+        for (int other = 0; other < sd_ORDER; ++other) {
+            if (other != node) {
+                value *= (x - xi_sol[other]) / (xi_sol[node] - xi_sol[other]);
             }
         }
+        return value;
+    }
 
-        Real theta2 = Real(1.0);
-        for (int off = 0; off < HermiteWENO2D::sd_space_hweno; ++off) {
-            const Real rho_raw = arr(i,j,k,MRHO*HermiteWENO2D::sd_space_hweno + off);
-            const Real mx_raw  = arr(i,j,k,MU  *HermiteWENO2D::sd_space_hweno + off);
-            const Real my_raw  = arr(i,j,k,MV  *HermiteWENO2D::sd_space_hweno + off);
-            const Real mz_raw  = arr(i,j,k,MW  *HermiteWENO2D::sd_space_hweno + off);
-            const Real e_raw   = arr(i,j,k,ME  *HermiteWENO2D::sd_space_hweno + off);
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    Real amr_pp_sample_child (Array4<Real const> const& fine, int i, int j, int k,
+                              int var, int point) noexcept
+    {
+        const int base = var * sd_SPACE;
+        if (point < sd_SPACE) {
+            return fine(i,j,k,base + point);
+        }
 
-            const Real rho_hat = rho_bar + theta1 * (rho_raw - rho_bar);
-            const Real p_hat = hweno_pressure_ideal(rho_hat, mx_raw, my_raw, mz_raw, e_raw, eos_gamma);
+        point -= sd_SPACE;
+        if (point < sd_edge_ORDER * sd_ORDER) {
+            const int iy = point / sd_edge_ORDER;
+            const int fx = point - iy * sd_edge_ORDER;
+            Real value = Real(0.0);
+            for (int ix = 0; ix < sd_ORDER; ++ix) {
+                value += amr_pp_lagrange_basis(ix, xi_flx[fx])
+                    * fine(i,j,k,base + box2point(ix,iy,0,0));
+            }
+            return value;
+        }
 
-            if (!std::isfinite(p_hat) || rho_hat < eps_rho || p_hat < eps_p) {
-                Real lo = Real(0.0);
-                Real hi = Real(1.0);
-                for (int iter = 0; iter < 30; ++iter) {
-                    const Real mid = Real(0.5) * (lo + hi);
-                    const Real rho_mid = rho_bar + mid * (rho_hat - rho_bar);
-                    const Real mx_mid  = mx_bar  + mid * (mx_raw  - mx_bar);
-                    const Real my_mid  = my_bar  + mid * (my_raw  - my_bar);
-                    const Real mz_mid  = mz_bar  + mid * (mz_raw  - mz_bar);
-                    const Real e_mid   = e_bar   + mid * (e_raw   - e_bar);
-                    const Real p_mid = hweno_pressure_ideal(rho_mid, mx_mid, my_mid, mz_mid, e_mid, eos_gamma);
-                    if (rho_mid >= eps_rho && std::isfinite(p_mid) && p_mid >= eps_p) {
-                        lo = mid;
-                    } else {
-                        hi = mid;
+        point -= sd_edge_ORDER * sd_ORDER;
+        const int ix = point / sd_edge_ORDER;
+        const int fy = point - ix * sd_edge_ORDER;
+        Real value = Real(0.0);
+        for (int iy = 0; iy < sd_ORDER; ++iy) {
+            value += amr_pp_lagrange_basis(iy, xi_flx[fy])
+                * fine(i,j,k,base + box2point(ix,iy,0,0));
+        }
+        return value;
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    Real amr_pp_parent_average (Array4<Real const> const& crse,
+                                int i, int j, int k, int var) noexcept
+    {
+        Real value = Real(0.0);
+        const int base = var * sd_SPACE;
+        for (int iy = 0; iy < sd_ORDER; ++iy) {
+            for (int ix = 0; ix < sd_ORDER; ++ix) {
+                value += SDwgh1D[ix] * SDwgh1D[iy]
+                    * crse(i,j,k,base + box2point(ix,iy,0,0));
+            }
+        }
+        return value;
+    }
+
+    constexpr int amr_pp_check_points = sd_SPACE + 2 * sd_edge_ORDER * sd_ORDER;
+
+    AMRProlongationPPCounters apply_parentwise_prolongation_pp (
+        FArrayBox& raw_fine, FArrayBox const& crse, Box const& parent_region,
+        int crse_comp, IntVect const& ratio, int nvar, bool limit_positivity,
+        Real gamma, Real eps_rho, Real eps_p,
+        IArrayBox const* forced_nonfinite, RunOn runon)
+    {
+        IArrayBox flags(parent_region, 5);
+        flags.setVal(0);
+        auto const& fine = raw_fine.array();
+        auto const& fine_const = raw_fine.const_array();
+        auto const& coarse = crse.const_array(crse_comp);
+        auto const& flag = flags.array();
+        Array4<int const> forced;
+        const bool has_forced = forced_nonfinite != nullptr;
+        if (has_forced) {
+            forced = forced_nonfinite->const_array();
+        }
+        const Real eps_internal = eps_p / (gamma - Real(1.0));
+
+        AMREX_HOST_DEVICE_PARALLEL_FOR_3D_FLAG(runon, parent_region, i, j, k,
+        {
+            bool parent_average_nonfinite = false;
+            for (int n = 0; n < nvar; ++n) {
+                parent_average_nonfinite = parent_average_nonfinite
+                    || !amrex::Math::isfinite(
+                        amr_pp_parent_average(coarse, i, j, k, n));
+            }
+            Real rho_bar = Real(0.0);
+            Real internal_bar = Real(0.0);
+            if (limit_positivity) {
+                rho_bar = amr_pp_parent_average(coarse, i, j, k, MRHO);
+                const Real mx_bar = amr_pp_parent_average(coarse, i, j, k, MU);
+                const Real my_bar = amr_pp_parent_average(coarse, i, j, k, MV);
+                const Real mz_bar = amr_pp_parent_average(coarse, i, j, k, MW);
+                const Real e_bar = amr_pp_parent_average(coarse, i, j, k, ME);
+                internal_bar = amr_pp_internal_energy(
+                    rho_bar, mx_bar, my_bar, mz_bar, e_bar);
+            }
+
+            if (parent_average_nonfinite
+                || (limit_positivity
+                    && (!amrex::Math::isfinite(rho_bar)
+                        || !amrex::Math::isfinite(internal_bar)
+                        || rho_bar < eps_rho || internal_bar < eps_internal))) {
+                flag(i,j,k,3) = 1;
+                return;
+            }
+
+            const bool forced_fallback = has_forced && forced(i,j,k,0) != 0;
+            bool raw_nonfinite = false;
+            Real rho_min = AMREX_REAL_MAX;
+            for (int joff = 0; joff < ratio[1]; ++joff) {
+                for (int ioff = 0; ioff < ratio[0]; ++ioff) {
+                    const int fi = i * ratio[0] + ioff;
+                    const int fj = j * ratio[1] + joff;
+                    for (int point = 0; point < amr_pp_check_points; ++point) {
+                        for (int n = 0; n < nvar; ++n) {
+                            raw_nonfinite = raw_nonfinite
+                                || !amrex::Math::isfinite(
+                                amr_pp_sample_child(fine_const, fi, fj, k, n, point));
+                        }
+                        if (limit_positivity) {
+                            rho_min = amrex::min(
+                                rho_min,
+                                amr_pp_sample_child(
+                                    fine_const, fi, fj, k, MRHO, point));
+                        }
                     }
                 }
-                theta2 = amrex::min(theta2, lo);
             }
+            bool nonfinite = forced_fallback || raw_nonfinite;
+
+            Real theta_rho = Real(1.0);
+            if (nonfinite) {
+                theta_rho = Real(0.0);
+            } else if (limit_positivity && rho_min < eps_rho) {
+                const Real denominator = rho_bar - rho_min;
+                theta_rho = denominator > Real(1.0e-30)
+                    ? amrex::min(Real(1.0), (rho_bar - eps_rho) / denominator)
+                    : Real(0.0);
+            }
+
+            Real internal_min = AMREX_REAL_MAX;
+            if (limit_positivity && !nonfinite) {
+                for (int joff = 0; joff < ratio[1]; ++joff) {
+                    for (int ioff = 0; ioff < ratio[0]; ++ioff) {
+                        const int fi = i * ratio[0] + ioff;
+                        const int fj = j * ratio[1] + joff;
+                        for (int point = 0; point < amr_pp_check_points; ++point) {
+                            const Real rho_raw = amr_pp_sample_child(
+                                fine_const, fi, fj, k, MRHO, point);
+                            const Real rho = rho_bar + theta_rho * (rho_raw - rho_bar);
+                            const Real internal = amr_pp_internal_energy(
+                                rho,
+                                amr_pp_sample_child(fine_const, fi, fj, k, MU, point),
+                                amr_pp_sample_child(fine_const, fi, fj, k, MV, point),
+                                amr_pp_sample_child(fine_const, fi, fj, k, MW, point),
+                                amr_pp_sample_child(fine_const, fi, fj, k, ME, point));
+                            if (!amrex::Math::isfinite(internal)) {
+                                raw_nonfinite = true;
+                                nonfinite = true;
+                            }
+                            internal_min = amrex::min(internal_min, internal);
+                        }
+                    }
+                }
+            }
+
+            Real theta_internal = Real(1.0);
+            if (nonfinite) {
+                theta_rho = Real(0.0);
+                theta_internal = Real(0.0);
+            } else if (limit_positivity && internal_min < eps_internal) {
+                const Real denominator = internal_bar - internal_min;
+                theta_internal = denominator > Real(1.0e-30)
+                    ? amrex::min(Real(1.0),
+                        (internal_bar - eps_internal) / denominator)
+                    : Real(0.0);
+            }
+
+            flag(i,j,k,0) = limit_positivity && !nonfinite
+                && theta_rho < Real(1.0);
+            flag(i,j,k,1) = limit_positivity && !nonfinite
+                && theta_internal < Real(1.0);
+            flag(i,j,k,2) = raw_nonfinite;
+            flag(i,j,k,4) = flag(i,j,k,0) || flag(i,j,k,1);
+
+            if (theta_rho < Real(1.0) || theta_internal < Real(1.0)) {
+                for (int joff = 0; joff < ratio[1]; ++joff) {
+                    for (int ioff = 0; ioff < ratio[0]; ++ioff) {
+                        const int fi = i * ratio[0] + ioff;
+                        const int fj = j * ratio[1] + joff;
+                        for (int n = 0; n < nvar; ++n) {
+                            const Real average = amr_pp_parent_average(coarse, i, j, k, n);
+                            for (int off = 0; off < sd_SPACE; ++off) {
+                                const int comp = n * sd_SPACE + off;
+                                if (nonfinite) {
+                                    fine(fi,fj,k,comp) = average;
+                                    continue;
+                                }
+                                const Real value = fine(fi,fj,k,comp);
+                                const Real density_limited = n == MRHO
+                                    ? rho_bar + theta_rho * (value - rho_bar)
+                                    : value;
+                                fine(fi,fj,k,comp) = average
+                                    + theta_internal * (density_limited - average);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        int invalid_parent = runon == RunOn::Gpu
+            ? flags.sum<RunOn::Device>(parent_region, 3)
+            : flags.sum<RunOn::Host>(parent_region, 3);
+        if (invalid_parent != 0) {
+            amrex::Abort(
+                "AMR prolongation requires finite parent averages and, when PP is enabled, an admissible gas-state average.");
         }
 
-        if (theta1 < Real(1.0) || theta2 < Real(1.0)) {
-            for (int n = 0; n < nvar; ++n) {
-                Real ubar = Real(0.0);
-                for (int off = 0; off < HermiteWENO2D::sd_space_hweno; ++off) {
-                    ubar += sd_weight(off) * arr(i,j,k,n*HermiteWENO2D::sd_space_hweno + off);
-                }
-                for (int off = 0; off < HermiteWENO2D::sd_space_hweno; ++off) {
-                    const Real raw = arr(i,j,k,n*HermiteWENO2D::sd_space_hweno + off);
-                    const Real uhat = (n == MRHO) ? (ubar + theta1 * (raw - ubar)) : raw;
-                    arr(i,j,k,n*HermiteWENO2D::sd_space_hweno + off) = ubar + theta2 * (uhat - ubar);
+        AMRProlongationPPCounters counts;
+        counts.rho = runon == RunOn::Gpu
+            ? flags.sum<RunOn::Device>(parent_region, 0)
+            : flags.sum<RunOn::Host>(parent_region, 0);
+        counts.pressure = runon == RunOn::Gpu
+            ? flags.sum<RunOn::Device>(parent_region, 1)
+            : flags.sum<RunOn::Host>(parent_region, 1);
+        counts.any = runon == RunOn::Gpu
+            ? flags.sum<RunOn::Device>(parent_region, 4)
+            : flags.sum<RunOn::Host>(parent_region, 4);
+        counts.nonfinite = runon == RunOn::Gpu
+            ? flags.sum<RunOn::Device>(parent_region, 2)
+            : flags.sum<RunOn::Host>(parent_region, 2);
+        return counts;
+    }
+
+    Long hweno_check_intermediate_finite (
+        FArrayBox& intermediate, FArrayBox const& crse,
+        Box const& parent_region, IntVect const& ratio,
+        int crse_comp, int nvar, IArrayBox& nonfinite_parent, RunOn runon)
+    {
+        auto const& tmp = intermediate.array();
+        auto const& coarse = crse.const_array(crse_comp);
+        auto const& bad = nonfinite_parent.array();
+
+        AMREX_HOST_DEVICE_PARALLEL_FOR_3D_FLAG(runon, parent_region, i, j, k,
+        {
+            bool nonfinite = false;
+            for (int joff = 0; joff < ratio[1]; ++joff) {
+                const int fj = j * ratio[1] + joff;
+                for (int n = 0; n < nvar; ++n) {
+                    for (int off = 0; off < sd_SPACE; ++off) {
+                        nonfinite = nonfinite
+                            || !amrex::Math::isfinite(
+                                tmp(i,fj,k,n*sd_SPACE + off));
+                    }
                 }
             }
+            bad(i,j,k,0) = nonfinite;
+            if (nonfinite) {
+                for (int joff = 0; joff < ratio[1]; ++joff) {
+                    const int fj = j * ratio[1] + joff;
+                    for (int n = 0; n < nvar; ++n) {
+                        const Real average = amr_pp_parent_average(
+                            coarse, i, j, k, n);
+                        for (int off = 0; off < sd_SPACE; ++off) {
+                            tmp(i,fj,k,n*sd_SPACE + off) = average;
+                        }
+                    }
+                }
+            }
+        });
+        return runon == RunOn::Gpu
+            ? nonfinite_parent.sum<RunOn::Device>(parent_region, 0)
+            : nonfinite_parent.sum<RunOn::Host>(parent_region, 0);
+    }
+
+    void amr_assert_fab_finite (FArrayBox const& fab, Box const& region,
+                                int comp, int ncomp, RunOn runon,
+                                char const* message)
+    {
+        IArrayBox bad(region, 1);
+        bad.setVal(0);
+        auto const& src = fab.const_array(comp);
+        auto const& flag = bad.array();
+        AMREX_HOST_DEVICE_PARALLEL_FOR_3D_FLAG(runon, region, i, j, k,
+        {
+            bool nonfinite = false;
+            for (int n = 0; n < ncomp; ++n) {
+                nonfinite = nonfinite || !amrex::Math::isfinite(src(i,j,k,n));
+            }
+            flag(i,j,k,0) = nonfinite;
+        });
+        const int count = runon == RunOn::Gpu
+            ? bad.sum<RunOn::Device>(region, 0)
+            : bad.sum<RunOn::Host>(region, 0);
+        if (count != 0) {
+            amrex::Abort(message);
         }
     }
 }
@@ -1908,6 +2118,27 @@ Mortar2D::CoarseBox (const Box& fine, int ratio)
 }
 
 void
+Mortar2D::configure_prolongation_pp (bool enabled, Real gamma,
+                                     Real eps_rho, Real eps_p) noexcept
+{
+    m_prolongation_pp_enabled = enabled;
+    m_pp_gamma = gamma;
+    m_pp_eps_rho = eps_rho;
+    m_pp_eps_p = eps_p;
+}
+
+AMRProlongationPPCounters
+Mortar2D::take_prolongation_pp_counters () noexcept
+{
+    return {
+        m_pp_rho_events.exchange(0),
+        m_pp_pressure_events.exchange(0),
+        m_pp_any_events.exchange(0),
+        m_pp_nonfinite_events.exchange(0)
+    };
+}
+
+void
 Mortar2D::interp (const FArrayBox& crse,
                     int              crse_comp,
                     FArrayBox&       fine,
@@ -1928,6 +2159,9 @@ Mortar2D::interp (const FArrayBox& crse,
     AMREX_ASSERT(ratio == 2 || ratio == 4);
 
     Box target_fine_region = fine_region & fine.box();
+    if (!target_fine_region.ok()) {
+        return;
+    }
 
     // amrex::Print() << "target_fine_region=" << target_fine_region   << std::endl;
 
@@ -1942,9 +2176,52 @@ Mortar2D::interp (const FArrayBox& crse,
     Array4<Real>       const& finearr = fine.array(fine_comp);
 
 #if (AMREX_SPACEDIM == 2)
-    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_fine_region, ncomp/sd_space, i, j, k, n,
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+        ncomp % sd_space == 0,
+        "Mortar2D interpolation requires complete SD-packed variables.");
+    if (type == Type::ScaleRef && m_prolongation_pp_enabled) {
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+            ncomp / sd_space > ME,
+            "Mortar2D prolongation PP requires density, momentum, and total energy.");
+    }
+
+    if (type != Type::ScaleRef || !m_prolongation_pp_enabled) {
+        AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(
+            runon, target_fine_region, ncomp/sd_space, i, j, k, n,
+        {
+            mortar_interp(i,j,k,n,finearr,crsearr,ratio);
+        });
+        return;
+    }
+
+    const Box parent_region = amrex::coarsen(target_fine_region, ratio);
+    const Box full_fine_region = amrex::refine(parent_region, ratio);
+    FArrayBox raw_fine(full_fine_region, ncomp);
+#ifdef AMREX_USE_GPU
+    Elixir raw_fine_eli;
+    if (run_on_gpu) { raw_fine_eli = raw_fine.elixir(); }
+#endif
+    auto const& raw = raw_fine.array();
+
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(
+        runon, full_fine_region, ncomp/sd_space, i, j, k, n,
     {
-        mortar_interp(i,j,k,n,finearr,crsearr,ratio);
+        mortar_interp(i,j,k,n,raw,crsearr,ratio);
+    });
+
+    const auto counts = apply_parentwise_prolongation_pp(
+        raw_fine, crse, parent_region, crse_comp, ratio, ncomp/sd_space, true,
+        m_pp_gamma, m_pp_eps_rho, m_pp_eps_p, nullptr, runon);
+    m_pp_rho_events.fetch_add(counts.rho);
+    m_pp_pressure_events.fetch_add(counts.pressure);
+    m_pp_any_events.fetch_add(counts.any);
+    m_pp_nonfinite_events.fetch_add(counts.nonfinite);
+
+    auto const& raw_const = raw_fine.const_array();
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(
+        runon, target_fine_region, ncomp, i, j, k, n,
+    {
+        finearr(i,j,k,n) = raw_const(i,j,k,n);
     });
 #endif
 }
@@ -2437,19 +2714,10 @@ HermiteWENO2D::hweno_interp_y (int i, int j, int k, int n,
         }
 #endif
 
-        GpuArray<Real,sd_order_hweno> up{};
-        for (int q = 0; q < sd_order_hweno; ++q) {
-            up[q] = EvalCubic(bH, xi_sol[q]/2.0);
-        }
-
         for (int s = 0; s < sd_order_hweno; ++s) {
-            Real val = Real(0.0);
-            for (int q = 0; q < sd_order_hweno; ++q) {
-                val += up[q] * P1DProjY(child, q, s);
-            }
-
             const int off = box2point(line, s, 0, n);
-            tmparr(i, j, k, off) = val;
+            tmparr(i, j, k, off) = EvalCubic(
+                bH, hweno_child_coordinate(child, s));
         }
     }
 }
@@ -2522,19 +2790,10 @@ HermiteWENO2D::hweno_interp_x (int i, int j, int k, int n,
         }
 #endif
 
-        GpuArray<Real,sd_order_hweno> up{};
-        for (int q = 0; q < sd_order_hweno; ++q) {
-            up[q] = EvalCubic(bH, xi_sol[q]/2.0);
-        }
-
         for (int s = 0; s < sd_order_hweno; ++s) {
-            Real val = Real(0.0);
-            for (int q = 0; q < sd_order_hweno; ++q) {
-                val += P1DProjX(child, s, q) * up[q];
-            }
-
             const int off = box2point(s, line, 0, n);
-            finearr(i, j, k, off) = val;
+            finearr(i, j, k, off) = EvalCubic(
+                bH, hweno_child_coordinate(child, s));
         }
     }
 }
@@ -2685,6 +2944,27 @@ HermiteWENO2D::hweno_restrict_x (int i, int j, int k, int n,
 }
 
 void
+HermiteWENO2D::configure_prolongation_pp (bool enabled, Real gamma,
+                                          Real eps_rho, Real eps_p) noexcept
+{
+    m_prolongation_pp_enabled = enabled;
+    m_pp_gamma = gamma;
+    m_pp_eps_rho = eps_rho;
+    m_pp_eps_p = eps_p;
+}
+
+AMRProlongationPPCounters
+HermiteWENO2D::take_prolongation_pp_counters () noexcept
+{
+    return {
+        m_pp_rho_events.exchange(0),
+        m_pp_pressure_events.exchange(0),
+        m_pp_any_events.exchange(0),
+        m_pp_nonfinite_events.exchange(0)
+    };
+}
+
+void
 HermiteWENO2D::interp (const FArrayBox& crse,
                        int              crse_comp,
                        FArrayBox&       fine,
@@ -2703,38 +2983,30 @@ HermiteWENO2D::interp (const FArrayBox& crse,
     amrex::ignore_unused(fine_geom, bcr, actual_comp, actual_state);
 
     AMREX_ASSERT(ratio == 2);
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+        ncomp % sd_space_hweno == 0,
+        "HermiteWENO2D interpolation requires complete SD-packed variables.");
 
     const Box target_fine_region = fine_region & fine.box();
+    if (!target_fine_region.ok()) {
+        return;
+    }
+    if (m_prolongation_pp_enabled) {
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+            ncomp / sd_space_hweno > ME,
+            "HermiteWENO2D prolongation PP requires density, momentum, and total energy.");
+    }
+    const Box parent_region = amrex::coarsen(target_fine_region, ratio);
+    const Box full_fine_region = amrex::refine(parent_region, ratio);
 
     bool run_on_gpu = (runon == RunOn::Gpu && Gpu::inLaunchRegion());
-    amrex::ignore_unused(run_on_gpu);
     const int nvar = ncomp / sd_space_hweno;
-    const Real eos_gamma = Real(1.4);
-    const Real eps_rho = Real(1.0e-10);
-    const Real eps_p = Real(1.0e-10);
 
     Array4<Real const> const& carr = crse.const_array(crse_comp);
     Array4<Real>       const& farr = fine.array(fine_comp);
 
-#if (AMREX_SPACEDIM == 3)
-    Box bz = amrex::coarsen(target_fine_region, IntVect(ratio[0],ratio[1],1));
-    bz.grow(IntVect(1,1,0));
-    FArrayBox tmpz(bz, ncomp);
-#ifdef AMREX_USE_GPU
-    Elixir tmpz_eli;
-    if (run_on_gpu) { tmpz_eli = tmpz.elixir(); }
-#endif
-    Array4<Real> const& tmpzarr = tmpz.array();
-
-    const Real hz = crse_geom.CellSize(2);
-    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, bz, ncomp, i, j, k, n,
-    {
-        hweno_interp_z(i, j, k, n, tmpzarr, carr, ratio, hz);
-    });
-#endif
-
-#if (AMREX_SPACEDIM >= 2)
-    Box by = amrex::coarsen(target_fine_region, IntVect(AMREX_D_DECL(ratio[0],1,1)));
+#if (AMREX_SPACEDIM == 2)
+    Box by = amrex::coarsen(full_fine_region, IntVect(AMREX_D_DECL(ratio[0],1,1)));
     by.grow(IntVect(AMREX_D_DECL(1,0,0))); // halo for x-direction stage
     FArrayBox tmpy(by, ncomp);
 #ifdef AMREX_USE_GPU
@@ -2742,37 +3014,56 @@ HermiteWENO2D::interp (const FArrayBox& crse,
     if (run_on_gpu) { tmpy_eli = tmpy.elixir(); }
 #endif
     Array4<Real> const& tmpyarr = tmpy.array();
-#if (AMREX_SPACEDIM == 2)
     Array4<Real const> srcarr = carr;
-#else
-    Array4<Real const> srcarr = tmpz.const_array();
-#endif
 
     const Real hy = crse_geom.CellSize(1);
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, ncomp/sd_space_hweno, i, j, k, n,
     {
         hweno_interp_y(i, j, k, n, tmpyarr, srcarr, ratio, hy);
     });
-    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, 1, i, j, k, n,
-    {
-        hweno_apply_positivity_cell(tmpyarr, i, j, k, nvar, eos_gamma, eps_rho, eps_p);
-    });
-#endif
 
-#if (AMREX_SPACEDIM == 1)
-    Array4<Real const> srcarr = carr;
-#else
+    const Box intermediate_parent_region = amrex::coarsen(
+        by, IntVect(AMREX_D_DECL(1,ratio[1],1)));
+    IArrayBox intermediate_nonfinite(intermediate_parent_region, 1);
+    intermediate_nonfinite.setVal(0);
+    const Long intermediate_nonfinite_count = hweno_check_intermediate_finite(
+        tmpy, crse, intermediate_parent_region, ratio,
+        crse_comp, nvar, intermediate_nonfinite, runon);
+    m_pp_nonfinite_events.fetch_add(intermediate_nonfinite_count);
+
     srcarr = tmpy.const_array();
+    FArrayBox raw_fine(full_fine_region, ncomp);
+#ifdef AMREX_USE_GPU
+    Elixir raw_fine_eli;
+    if (run_on_gpu) { raw_fine_eli = raw_fine.elixir(); }
 #endif
+    auto const& raw = raw_fine.array();
     const Real hx = crse_geom.CellSize(0);
-    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_fine_region, ncomp/sd_space_hweno, i, j, k, n,
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, full_fine_region, ncomp/sd_space_hweno, i, j, k, n,
     {
-        hweno_interp_x(i, j, k, n, farr, srcarr, ratio, hx);
+        hweno_interp_x(i, j, k, n, raw, srcarr, ratio, hx);
     });
-    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_fine_region, 1, i, j, k, n,
+
+    const auto counts = apply_parentwise_prolongation_pp(
+        raw_fine, crse, parent_region, crse_comp, ratio, nvar,
+        m_prolongation_pp_enabled,
+        m_pp_gamma, m_pp_eps_rho, m_pp_eps_p,
+        &intermediate_nonfinite, runon);
+    m_pp_rho_events.fetch_add(counts.rho);
+    m_pp_pressure_events.fetch_add(counts.pressure);
+    m_pp_any_events.fetch_add(counts.any);
+    m_pp_nonfinite_events.fetch_add(counts.nonfinite);
+
+    auto const& raw_const = raw_fine.const_array();
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_fine_region, ncomp, i, j, k, n,
     {
-        hweno_apply_positivity_cell(farr, i, j, k, nvar, eos_gamma, eps_rho, eps_p);
+        farr(i,j,k,n) = raw_const(i,j,k,n);
     });
+#else
+    amrex::ignore_unused(
+        full_fine_region, run_on_gpu, nvar, carr, farr, crse_geom);
+    amrex::Abort("HermiteWENO2D prolongation is implemented only in 2D.");
+#endif
 }
 
 void
@@ -2800,11 +3091,6 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
     // const Box inner_box = amrex::grow(target_crse_region, -1);
     bool run_on_gpu = (runon == RunOn::Gpu && Gpu::inLaunchRegion());
     amrex::ignore_unused(run_on_gpu);
-    const int nvar = ncomp / sd_space_hweno;
-    const Real eos_gamma = Real(1.4);
-    const Real eps_rho = Real(1.0e-10);
-    const Real eps_p = Real(1.0e-10);
-
     Array4<Real const> const& finearr = fine.const_array(fine_comp);
     Array4<Real>       const& crsearr = crse.array(crse_comp);
 
@@ -2846,10 +3132,9 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
     {
         hweno_restrict_y(i, j, k, n, tmpyarr, srcarr, ratio, hy_f, hy_c);
     });
-    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, 1, i, j, k, n,
-    {
-        hweno_apply_positivity_cell(tmpyarr, i, j, k, nvar, eos_gamma, eps_rho, eps_p);
-    });
+    amr_assert_fab_finite(
+        tmpy, by, 0, ncomp, runon,
+        "HWENO restriction produced a non-finite intermediate state.");
 #endif
 
 #if (AMREX_SPACEDIM == 1)
@@ -2863,10 +3148,9 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
     {
         hweno_restrict_x(i, j, k, n, crsearr, srcarr, ratio, hx_f, hx_c);
     });
-    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_crse_region, 1, i, j, k, n,
-    {
-        hweno_apply_positivity_cell(crsearr, i, j, k, nvar, eos_gamma, eps_rho, eps_p);
-    });
+    amr_assert_fab_finite(
+        crse, target_crse_region, crse_comp, ncomp, runon,
+        "HWENO restriction produced a non-finite coarse polynomial.");
 }
 
 }

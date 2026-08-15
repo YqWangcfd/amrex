@@ -7,11 +7,21 @@
 #include <AMReX_InterpBase.H>
 #include <SD_Mapping_K.H>
 
+#include <atomic>
+
 namespace amrex {
 
 class Geometry;
 class FArrayBox;
 class IArrayBox;
+
+struct AMRProlongationPPCounters
+{
+    Long rho = 0;
+    Long pressure = 0;
+    Long any = 0;
+    Long nonfinite = 0;
+};
 
 /**
 * \brief Virtual base class for interpolaters.
@@ -1299,6 +1309,10 @@ public:
     Mortar2D() = default;              
     explicit Mortar2D(Type t) noexcept : type(t) {}
 
+    void configure_prolongation_pp (bool enabled, Real gamma,
+                                     Real eps_rho, Real eps_p) noexcept;
+    AMRProlongationPPCounters take_prolongation_pp_counters () noexcept;
+
     /**
     * \brief Returns coarsened box given fine box and refinement ratio.
     *
@@ -1390,15 +1404,25 @@ public:
     void mortar_restrict_flatten(const int i, const int j, const int k, const int n, 
                 Array4<Real> const crsearr, Array4<const Real> const& finearr,
                 const IntVect&   ratio);
+
+private:
+    bool m_prolongation_pp_enabled = false;
+    Real m_pp_gamma = Real(1.4);
+    Real m_pp_eps_rho = Real(1.0e-13);
+    Real m_pp_eps_p = Real(1.0e-13);
+    std::atomic<Long> m_pp_rho_events{0};
+    std::atomic<Long> m_pp_pressure_events{0};
+    std::atomic<Long> m_pp_any_events{0};
+    std::atomic<Long> m_pp_nonfinite_events{0};
 };
 
 /**
-* \brief HWENO mapper scaffold for 2D SD AMR.
+* \brief Two-dimensional dimension-by-dimension HWENO mapper for SD AMR.
 *
-* Current implementation keeps behavior compatible by delegating to
-* existing mortar scale-refinement interpolation/restriction. This class
-* provides the dedicated AMReX Interpolater interface for future HWENO
-* kernels in interp/restrict.
+* Prolongation evaluates each reconstructed parent polynomial directly at
+* child solution points and can apply one parent-wise positivity limiter to
+* the complete sibling set. Restriction remains conservative and does not
+* apply an AMR-specific positivity limiter.
 */
 class HermiteWENO2D
     :
@@ -1466,7 +1490,20 @@ public:
                    int              actual_state,
                    RunOn            runon) override;
 
+    void configure_prolongation_pp (bool enabled, Real gamma,
+                                     Real eps_rho, Real eps_p) noexcept;
+    AMRProlongationPPCounters take_prolongation_pp_counters () noexcept;
+
 private:
+    bool m_prolongation_pp_enabled = false;
+    Real m_pp_gamma = Real(1.4);
+    Real m_pp_eps_rho = Real(1.0e-13);
+    Real m_pp_eps_p = Real(1.0e-13);
+    std::atomic<Long> m_pp_rho_events{0};
+    std::atomic<Long> m_pp_pressure_events{0};
+    std::atomic<Long> m_pp_any_events{0};
+    std::atomic<Long> m_pp_nonfinite_events{0};
+
     static constexpr Real sd5_w0[sd_order_hweno] = {
         Real(0.0838906142333418), Real(0.2627760524333247), Real(0.3066666666666672),
         Real(0.2627760524333248), Real(0.0838906142333418)
@@ -1603,15 +1640,9 @@ private:
     }
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-    static Real P1DProjY (int child, int q, int s) noexcept
+    static Real hweno_child_coordinate (int child, int solution_point) noexcept
     {
-        return Mortar2D::Py2D_prol[child][q][s];
-    }
-
-    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-    static Real P1DProjX (int child, int s, int q) noexcept
-    {
-        return Mortar2D::Px2D_prol[child][s][q];
+        return (xi_sol[solution_point] + Real(2*child - 1)) / Real(4.0);
     }
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE

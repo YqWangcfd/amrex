@@ -3082,20 +3082,32 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
                          RunOn            runon)
 {
     BL_PROFILE("HermiteWENO2D::restrict()");
-    amrex::ignore_unused(bcr, actual_comp, actual_state);
 
     AMREX_ASSERT(ratio == 2);
     AMREX_ASSERT(ncomp % sd_space_hweno == 0);
 
     const Box target_crse_region = crse_region & crse.box();
-    // const Box inner_box = amrex::grow(target_crse_region, -1);
+    // A centered HWENO restriction needs one neighboring parent on each
+    // side.  At a FAB boundary those neighbors live in fine ghost cells,
+    // whose provenance depends on the patch layout.  Seed the complete
+    // covered region with the conservative L2 restriction, then use HWENO
+    // only where its full stencil is contained in the fine valid region.
+    mortar_interp_scaleRef.restrict(
+        fine, fine_comp, crse, crse_comp, ncomp, target_crse_region,
+        ratio, fine_geom, crse_geom, bcr, actual_comp, actual_state, runon);
+
+    const Box inner_box = amrex::grow(target_crse_region, -1);
+    if (!inner_box.ok()) {
+        return;
+    }
+
     bool run_on_gpu = (runon == RunOn::Gpu && Gpu::inLaunchRegion());
     amrex::ignore_unused(run_on_gpu);
     Array4<Real const> const& finearr = fine.const_array(fine_comp);
     Array4<Real>       const& crsearr = crse.array(crse_comp);
 
 #if (AMREX_SPACEDIM == 3)
-    Box bz = amrex::refine(target_crse_region, IntVect(ratio[0],ratio[1],1));
+    Box bz = amrex::refine(inner_box, IntVect(ratio[0],ratio[1],1));
     FArrayBox tmpz(bz, ncomp);
 #ifdef AMREX_USE_GPU
     Elixir tmpz_eli;
@@ -3112,7 +3124,7 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
 #endif
 
 #if (AMREX_SPACEDIM >= 2)
-    Box by = amrex::refine(target_crse_region, IntVect(AMREX_D_DECL(ratio[0],1,1)));
+    Box by = amrex::refine(inner_box, IntVect(AMREX_D_DECL(ratio[0],1,1)));
     by.grow(IntVect(AMREX_D_DECL(ratio[0],0,0)));
     FArrayBox tmpy(by, ncomp);
 #ifdef AMREX_USE_GPU
@@ -3144,7 +3156,7 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
 #endif
     const Real hx_f = fine_geom.CellSize(0);
     const Real hx_c = crse_geom.CellSize(0);
-    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_crse_region, ncomp/sd_space_hweno, i, j, k, n,
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, inner_box, ncomp/sd_space_hweno, i, j, k, n,
     {
         hweno_restrict_x(i, j, k, n, crsearr, srcarr, ratio, hx_f, hx_c);
     });

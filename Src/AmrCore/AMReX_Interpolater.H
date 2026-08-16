@@ -23,6 +23,13 @@ struct AMRProlongationPPCounters
     Long nonfinite = 0;
 };
 
+struct AMRRestrictionPPCounters
+{
+    Long rho = 0;
+    Long pressure = 0;
+    Long any = 0;
+};
+
 /**
 * \brief Virtual base class for interpolaters.
 *
@@ -1309,9 +1316,10 @@ public:
     Mortar2D() = default;              
     explicit Mortar2D(Type t) noexcept : type(t) {}
 
-    void configure_prolongation_pp (bool enabled, Real gamma,
-                                     Real eps_rho, Real eps_p) noexcept;
+    void configure_amr_transfer_pp (bool enabled, Real gamma,
+                                    Real eps_rho, Real eps_p) noexcept;
     AMRProlongationPPCounters take_prolongation_pp_counters () noexcept;
+    AMRRestrictionPPCounters take_restriction_pp_counters () noexcept;
 
     /**
     * \brief Returns coarsened box given fine box and refinement ratio.
@@ -1414,6 +1422,9 @@ private:
     std::atomic<Long> m_pp_pressure_events{0};
     std::atomic<Long> m_pp_any_events{0};
     std::atomic<Long> m_pp_nonfinite_events{0};
+    std::atomic<Long> m_restrict_rho_events{0};
+    std::atomic<Long> m_restrict_pressure_events{0};
+    std::atomic<Long> m_restrict_any_events{0};
 };
 
 /**
@@ -1421,8 +1432,8 @@ private:
 *
 * Prolongation evaluates each reconstructed parent polynomial directly at
 * child solution points and can apply one parent-wise positivity limiter to
-* the complete sibling set. Restriction remains conservative and does not
-* apply an AMR-specific positivity limiter.
+* the complete sibling set. Restriction applies one conservative parent-wise
+* positivity limiter after the final coarse polynomial has been assembled.
 */
 class HermiteWENO2D
     :
@@ -1490,9 +1501,10 @@ public:
                    int              actual_state,
                    RunOn            runon) override;
 
-    void configure_prolongation_pp (bool enabled, Real gamma,
-                                     Real eps_rho, Real eps_p) noexcept;
+    void configure_amr_transfer_pp (bool enabled, Real gamma,
+                                    Real eps_rho, Real eps_p) noexcept;
     AMRProlongationPPCounters take_prolongation_pp_counters () noexcept;
+    AMRRestrictionPPCounters take_restriction_pp_counters () noexcept;
 
 private:
     bool m_prolongation_pp_enabled = false;
@@ -1503,6 +1515,9 @@ private:
     std::atomic<Long> m_pp_pressure_events{0};
     std::atomic<Long> m_pp_any_events{0};
     std::atomic<Long> m_pp_nonfinite_events{0};
+    std::atomic<Long> m_restrict_rho_events{0};
+    std::atomic<Long> m_restrict_pressure_events{0};
+    std::atomic<Long> m_restrict_any_events{0};
 
     static constexpr Real sd5_w0[sd_order_hweno] = {
         Real(0.0838906142333418), Real(0.2627760524333247), Real(0.3066666666666672),

@@ -121,6 +121,153 @@ namespace{
         return value;
     }
 
+    using AMRRestrictionPPState = GpuArray<Real, NEQ>;
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    Real amr_restriction_pressure (AMRRestrictionPPState const& state,
+                                   Real gamma) noexcept
+    {
+        return (gamma - Real(1.0)) * amr_pp_internal_energy(
+            state[MRHO], state[MU], state[MV], state[MW], state[ME]);
+    }
+
+    AMRRestrictionPPCounters apply_restriction_positivity (
+        FArrayBox& crse, Box const& region, int crse_comp, int nvar,
+        bool enabled, Real gamma, Real eps_rho, Real eps_p, RunOn runon)
+    {
+        AMRRestrictionPPCounters counts;
+        if (!enabled || !region.ok()) {
+            return counts;
+        }
+
+#if (AMREX_SPACEDIM != 2)
+        amrex::ignore_unused(
+            crse, crse_comp, nvar, gamma, eps_rho, eps_p, runon);
+        amrex::Abort(
+            "AMR restriction PP for SD-packed states is implemented only in 2D.");
+        return counts;
+#else
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+            nvar == NEQ,
+            "AMR restriction PP requires a complete SD-packed state.");
+
+        IArrayBox flags(region, 4);
+        flags.setVal(0);
+        auto const& state = crse.array(crse_comp);
+        auto const& flag = flags.array();
+
+        AMREX_HOST_DEVICE_PARALLEL_FOR_3D_FLAG(runon, region, i, j, k,
+        {
+            AMRRestrictionPPState Ubar{};
+            bool nonfinite = false;
+            Real rho_min = AMREX_REAL_MAX;
+
+            for (int iy = 0; iy < sd_ORDER; ++iy) {
+                for (int ix = 0; ix < sd_ORDER; ++ix) {
+                    const int off = box2point(ix,iy,0,0);
+                    const Real weight = SDwgh1D[ix] * SDwgh1D[iy];
+                    for (int n = 0; n < NEQ; ++n) {
+                        const Real value = state(i,j,k,n*sd_SPACE + off);
+                        nonfinite = nonfinite || !amrex::Math::isfinite(value);
+                        Ubar[n] += weight * value;
+                    }
+                    rho_min = amrex::min(
+                        rho_min, state(i,j,k,MRHO*sd_SPACE + off));
+                }
+            }
+
+            for (int n = 0; n < NEQ; ++n) {
+                nonfinite = nonfinite || !amrex::Math::isfinite(Ubar[n]);
+            }
+            const Real rho_bar = Ubar[MRHO];
+            const Real p_bar = amr_restriction_pressure(Ubar, gamma);
+            if (nonfinite || !amrex::Math::isfinite(p_bar)
+                || rho_bar < eps_rho || p_bar < eps_p) {
+                flag(i,j,k,2) = 1;
+                return;
+            }
+
+            Real theta_rho = Real(1.0);
+            if (rho_min < eps_rho) {
+                const Real denominator = rho_bar - rho_min;
+                theta_rho = denominator > Real(1.0e-30)
+                    ? amrex::min(
+                        Real(1.0), (rho_bar - eps_rho) / denominator)
+                    : Real(0.0);
+            }
+
+            Real theta_pressure = Real(1.0);
+            for (int off = 0; off < sd_SPACE; ++off) {
+                AMRRestrictionPPState Uhat{};
+                for (int n = 0; n < NEQ; ++n) {
+                    const Real raw = state(i,j,k,n*sd_SPACE + off);
+                    Uhat[n] = n == MRHO
+                        ? rho_bar + theta_rho * (raw - rho_bar)
+                        : raw;
+                }
+
+                const Real p_hat = amr_restriction_pressure(Uhat, gamma);
+                if (!amrex::Math::isfinite(p_hat)
+                    || Uhat[MRHO] < eps_rho || p_hat < eps_p) {
+                    Real lo = Real(0.0);
+                    Real hi = Real(1.0);
+                    for (int iter = 0; iter < 64; ++iter) {
+                        const Real mid = Real(0.5) * (lo + hi);
+                        AMRRestrictionPPState Umid{};
+                        for (int n = 0; n < NEQ; ++n) {
+                            Umid[n] = Ubar[n] + mid * (Uhat[n] - Ubar[n]);
+                        }
+                        const Real p_mid = amr_restriction_pressure(Umid, gamma);
+                        if (amrex::Math::isfinite(p_mid)
+                            && Umid[MRHO] >= eps_rho && p_mid >= eps_p) {
+                            lo = mid;
+                        } else {
+                            hi = mid;
+                        }
+                    }
+                    theta_pressure = amrex::min(theta_pressure, lo);
+                }
+            }
+
+            flag(i,j,k,0) = theta_rho < Real(1.0);
+            flag(i,j,k,1) = theta_pressure < Real(1.0);
+            flag(i,j,k,3) = flag(i,j,k,0) || flag(i,j,k,1);
+
+            if (flag(i,j,k,3) != 0) {
+                for (int off = 0; off < sd_SPACE; ++off) {
+                    for (int n = 0; n < NEQ; ++n) {
+                        const Real raw = state(i,j,k,n*sd_SPACE + off);
+                        const Real density_limited = n == MRHO
+                            ? rho_bar + theta_rho * (raw - rho_bar)
+                            : raw;
+                        state(i,j,k,n*sd_SPACE + off) = Ubar[n]
+                            + theta_pressure * (density_limited - Ubar[n]);
+                    }
+                }
+            }
+        });
+
+        const int invalid = runon == RunOn::Gpu
+            ? flags.sum<RunOn::Device>(region, 2)
+            : flags.sum<RunOn::Host>(region, 2);
+        if (invalid != 0) {
+            amrex::Abort(
+                "AMR restriction PP requires finite point values and an admissible coarse-cell average.");
+        }
+
+        counts.rho = runon == RunOn::Gpu
+            ? flags.sum<RunOn::Device>(region, 0)
+            : flags.sum<RunOn::Host>(region, 0);
+        counts.pressure = runon == RunOn::Gpu
+            ? flags.sum<RunOn::Device>(region, 1)
+            : flags.sum<RunOn::Host>(region, 1);
+        counts.any = runon == RunOn::Gpu
+            ? flags.sum<RunOn::Device>(region, 3)
+            : flags.sum<RunOn::Host>(region, 3);
+        return counts;
+#endif
+    }
+
     constexpr int amr_pp_check_points = sd_SPACE + 2 * sd_edge_ORDER * sd_ORDER;
 
     AMRProlongationPPCounters apply_parentwise_prolongation_pp (
@@ -2118,8 +2265,8 @@ Mortar2D::CoarseBox (const Box& fine, int ratio)
 }
 
 void
-Mortar2D::configure_prolongation_pp (bool enabled, Real gamma,
-                                     Real eps_rho, Real eps_p) noexcept
+Mortar2D::configure_amr_transfer_pp (bool enabled, Real gamma,
+                                    Real eps_rho, Real eps_p) noexcept
 {
     m_prolongation_pp_enabled = enabled;
     m_pp_gamma = gamma;
@@ -2135,6 +2282,16 @@ Mortar2D::take_prolongation_pp_counters () noexcept
         m_pp_pressure_events.exchange(0),
         m_pp_any_events.exchange(0),
         m_pp_nonfinite_events.exchange(0)
+    };
+}
+
+AMRRestrictionPPCounters
+Mortar2D::take_restriction_pp_counters () noexcept
+{
+    return {
+        m_restrict_rho_events.exchange(0),
+        m_restrict_pressure_events.exchange(0),
+        m_restrict_any_events.exchange(0)
     };
 }
 
@@ -2370,6 +2527,11 @@ Mortar2D::restrict (const FArrayBox& fine,
 
 
 #if (AMREX_SPACEDIM == 2)
+    if (m_prolongation_pp_enabled) {
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+            ncomp / sd_space == NEQ,
+            "Mortar2D restriction PP requires a complete SD-packed state.");
+    }
     auto const& destarr = crsearr;
     auto const& srcarr  = finearr;
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, target_crse_region, ncomp/sd_space, i, j, k, n,
@@ -2377,6 +2539,13 @@ Mortar2D::restrict (const FArrayBox& fine,
         mortar_restrict(i,j,k,n,destarr,srcarr,ratio);
         // mortar_restrict_flatten(i,j,k,n,destarr,srcarr,ratio);
     });
+    const auto counts = apply_restriction_positivity(
+        crse, target_crse_region, crse_comp, ncomp/sd_space,
+        m_prolongation_pp_enabled,
+        m_pp_gamma, m_pp_eps_rho, m_pp_eps_p, runon);
+    m_restrict_rho_events.fetch_add(counts.rho);
+    m_restrict_pressure_events.fetch_add(counts.pressure);
+    m_restrict_any_events.fetch_add(counts.any);
 #endif
 }
 
@@ -2944,8 +3113,8 @@ HermiteWENO2D::hweno_restrict_x (int i, int j, int k, int n,
 }
 
 void
-HermiteWENO2D::configure_prolongation_pp (bool enabled, Real gamma,
-                                          Real eps_rho, Real eps_p) noexcept
+HermiteWENO2D::configure_amr_transfer_pp (bool enabled, Real gamma,
+                                         Real eps_rho, Real eps_p) noexcept
 {
     m_prolongation_pp_enabled = enabled;
     m_pp_gamma = gamma;
@@ -2961,6 +3130,16 @@ HermiteWENO2D::take_prolongation_pp_counters () noexcept
         m_pp_pressure_events.exchange(0),
         m_pp_any_events.exchange(0),
         m_pp_nonfinite_events.exchange(0)
+    };
+}
+
+AMRRestrictionPPCounters
+HermiteWENO2D::take_restriction_pp_counters () noexcept
+{
+    return {
+        m_restrict_rho_events.exchange(0),
+        m_restrict_pressure_events.exchange(0),
+        m_restrict_any_events.exchange(0)
     };
 }
 
@@ -3082,29 +3261,50 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
                          RunOn            runon)
 {
     BL_PROFILE("HermiteWENO2D::restrict()");
+    amrex::ignore_unused(bcr, actual_comp, actual_state);
 
     AMREX_ASSERT(ratio == 2);
     AMREX_ASSERT(ncomp % sd_space_hweno == 0);
+    if (m_prolongation_pp_enabled) {
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+            ncomp / sd_space_hweno == NEQ,
+            "HermiteWENO2D restriction PP requires a complete SD-packed state.");
+    }
 
     const Box target_crse_region = crse_region & crse.box();
+    bool run_on_gpu = (runon == RunOn::Gpu && Gpu::inLaunchRegion());
+    amrex::ignore_unused(run_on_gpu);
+    Array4<Real const> const& finearr = fine.const_array(fine_comp);
+    Array4<Real>       const& crsearr = crse.array(crse_comp);
+
     // A centered HWENO restriction needs one neighboring parent on each
     // side.  At a FAB boundary those neighbors live in fine ghost cells,
     // whose provenance depends on the patch layout.  Seed the complete
     // covered region with the conservative L2 restriction, then use HWENO
     // only where its full stencil is contained in the fine valid region.
-    mortar_interp_scaleRef.restrict(
-        fine, fine_comp, crse, crse_comp, ncomp, target_crse_region,
-        ratio, fine_geom, crse_geom, bcr, actual_comp, actual_state, runon);
+#if (AMREX_SPACEDIM == 2)
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(
+        runon, target_crse_region, ncomp/sd_space_hweno, i, j, k, n,
+    {
+        mortar_interp_scaleRef.mortar_restrict(
+            i, j, k, n, crsearr, finearr, ratio);
+    });
+#else
+    amrex::ignore_unused(
+        fine_geom, crse_geom, bcr, actual_comp, actual_state);
+#endif
 
     const Box inner_box = amrex::grow(target_crse_region, -1);
     if (!inner_box.ok()) {
+        const auto counts = apply_restriction_positivity(
+            crse, target_crse_region, crse_comp, ncomp/sd_space_hweno,
+            m_prolongation_pp_enabled,
+            m_pp_gamma, m_pp_eps_rho, m_pp_eps_p, runon);
+        m_restrict_rho_events.fetch_add(counts.rho);
+        m_restrict_pressure_events.fetch_add(counts.pressure);
+        m_restrict_any_events.fetch_add(counts.any);
         return;
     }
-
-    bool run_on_gpu = (runon == RunOn::Gpu && Gpu::inLaunchRegion());
-    amrex::ignore_unused(run_on_gpu);
-    Array4<Real const> const& finearr = fine.const_array(fine_comp);
-    Array4<Real>       const& crsearr = crse.array(crse_comp);
 
 #if (AMREX_SPACEDIM == 3)
     Box bz = amrex::refine(inner_box, IntVect(ratio[0],ratio[1],1));
@@ -3163,6 +3363,13 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
     amr_assert_fab_finite(
         crse, target_crse_region, crse_comp, ncomp, runon,
         "HWENO restriction produced a non-finite coarse polynomial.");
+    const auto counts = apply_restriction_positivity(
+        crse, target_crse_region, crse_comp, ncomp/sd_space_hweno,
+        m_prolongation_pp_enabled,
+        m_pp_gamma, m_pp_eps_rho, m_pp_eps_p, runon);
+    m_restrict_rho_events.fetch_add(counts.rho);
+    m_restrict_pressure_events.fetch_add(counts.pressure);
+    m_restrict_any_events.fetch_add(counts.any);
 }
 
 }

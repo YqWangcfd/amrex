@@ -121,6 +121,26 @@ namespace{
         return value;
     }
 
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    Real amr_pp_child_average (Array4<Real const> const& child,
+                               int i, int j, int k, int var,
+                               IntVect const& child_ratio) noexcept
+    {
+        Real value = Real(0.0);
+        const Real weight = Real(1.0)
+            / Real(child_ratio[0] * child_ratio[1]);
+        for (int joff = 0; joff < child_ratio[1]; ++joff) {
+            for (int ioff = 0; ioff < child_ratio[0]; ++ioff) {
+                value += weight * amr_pp_parent_average(
+                    child,
+                    i * child_ratio[0] + ioff,
+                    j * child_ratio[1] + joff,
+                    k, var);
+            }
+        }
+        return value;
+    }
+
     using AMRRestrictionPPState = GpuArray<Real, NEQ>;
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
@@ -133,6 +153,8 @@ namespace{
 
     AMRRestrictionPPCounters apply_restriction_positivity (
         FArrayBox& crse, Box const& region, int crse_comp, int nvar,
+        FArrayBox const* source, int source_comp,
+        IntVect const& source_ratio,
         bool enabled, Real gamma, Real eps_rho, Real eps_p, RunOn runon)
     {
         AMRRestrictionPPCounters counts;
@@ -142,7 +164,8 @@ namespace{
 
 #if (AMREX_SPACEDIM != 2)
         amrex::ignore_unused(
-            crse, crse_comp, nvar, gamma, eps_rho, eps_p, runon);
+            crse, crse_comp, nvar, source, source_comp, source_ratio,
+            gamma, eps_rho, eps_p, runon);
         amrex::Abort(
             "AMR restriction PP for SD-packed states is implemented only in 2D.");
         return counts;
@@ -155,12 +178,27 @@ namespace{
         flags.setVal(0);
         auto const& state = crse.array(crse_comp);
         auto const& flag = flags.array();
+        Array4<Real const> source_state;
+        const bool has_source = source != nullptr;
+        if (has_source) {
+            source_state = source->const_array(source_comp);
+        }
 
         AMREX_HOST_DEVICE_PARALLEL_FOR_3D_FLAG(runon, region, i, j, k,
         {
             AMRRestrictionPPState Ubar{};
-            bool nonfinite = false;
+            bool average_nonfinite = false;
+            bool raw_nonfinite = false;
             Real rho_min = AMREX_REAL_MAX;
+
+            if (has_source) {
+                for (int n = 0; n < NEQ; ++n) {
+                    Ubar[n] = amr_pp_child_average(
+                        source_state, i, j, k, n, source_ratio);
+                    average_nonfinite = average_nonfinite
+                        || !amrex::Math::isfinite(Ubar[n]);
+                }
+            }
 
             for (int iy = 0; iy < sd_ORDER; ++iy) {
                 for (int ix = 0; ix < sd_ORDER; ++ix) {
@@ -168,8 +206,11 @@ namespace{
                     const Real weight = SDwgh1D[ix] * SDwgh1D[iy];
                     for (int n = 0; n < NEQ; ++n) {
                         const Real value = state(i,j,k,n*sd_SPACE + off);
-                        nonfinite = nonfinite || !amrex::Math::isfinite(value);
-                        Ubar[n] += weight * value;
+                        raw_nonfinite = raw_nonfinite
+                            || !amrex::Math::isfinite(value);
+                        if (!has_source) {
+                            Ubar[n] += weight * value;
+                        }
                     }
                     rho_min = amrex::min(
                         rho_min, state(i,j,k,MRHO*sd_SPACE + off));
@@ -177,18 +218,21 @@ namespace{
             }
 
             for (int n = 0; n < NEQ; ++n) {
-                nonfinite = nonfinite || !amrex::Math::isfinite(Ubar[n]);
+                average_nonfinite = average_nonfinite
+                    || !amrex::Math::isfinite(Ubar[n]);
             }
             const Real rho_bar = Ubar[MRHO];
             const Real p_bar = amr_restriction_pressure(Ubar, gamma);
-            if (nonfinite || !amrex::Math::isfinite(p_bar)
+            if (average_nonfinite || !amrex::Math::isfinite(p_bar)
                 || rho_bar < eps_rho || p_bar < eps_p) {
                 flag(i,j,k,2) = 1;
                 return;
             }
 
             Real theta_rho = Real(1.0);
-            if (rho_min < eps_rho) {
+            if (raw_nonfinite) {
+                theta_rho = Real(0.0);
+            } else if (rho_min < eps_rho) {
                 const Real denominator = rho_bar - rho_min;
                 theta_rho = denominator > Real(1.0e-30)
                     ? amrex::min(
@@ -197,7 +241,10 @@ namespace{
             }
 
             Real theta_pressure = Real(1.0);
-            for (int off = 0; off < sd_SPACE; ++off) {
+            if (raw_nonfinite) {
+                theta_pressure = Real(0.0);
+            }
+            for (int off = 0; off < sd_SPACE && !raw_nonfinite; ++off) {
                 AMRRestrictionPPState Uhat{};
                 for (int n = 0; n < NEQ; ++n) {
                     const Real raw = state(i,j,k,n*sd_SPACE + off);
@@ -229,13 +276,18 @@ namespace{
                 }
             }
 
-            flag(i,j,k,0) = theta_rho < Real(1.0);
-            flag(i,j,k,1) = theta_pressure < Real(1.0);
+            flag(i,j,k,0) = !raw_nonfinite && theta_rho < Real(1.0);
+            flag(i,j,k,1) = !raw_nonfinite && theta_pressure < Real(1.0);
             flag(i,j,k,3) = flag(i,j,k,0) || flag(i,j,k,1);
+            flag(i,j,k,3) = flag(i,j,k,3) || raw_nonfinite;
 
             if (flag(i,j,k,3) != 0) {
                 for (int off = 0; off < sd_SPACE; ++off) {
                     for (int n = 0; n < NEQ; ++n) {
+                        if (raw_nonfinite) {
+                            state(i,j,k,n*sd_SPACE + off) = Ubar[n];
+                            continue;
+                        }
                         const Real raw = state(i,j,k,n*sd_SPACE + off);
                         const Real density_limited = n == MRHO
                             ? rho_bar + theta_rho * (raw - rho_bar)
@@ -272,10 +324,14 @@ namespace{
 
     AMRProlongationPPCounters apply_parentwise_prolongation_pp (
         FArrayBox& raw_fine, FArrayBox const& crse, Box const& parent_region,
-        int crse_comp, IntVect const& ratio, int nvar, bool limit_positivity,
+        int crse_comp, IntVect const& child_ratio, int nvar,
+        bool limit_positivity, bool check_flux_points,
         Real gamma, Real eps_rho, Real eps_p,
         IArrayBox const* forced_nonfinite, RunOn runon)
     {
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+            !limit_positivity || nvar == NEQ,
+            "AMR prolongation PP requires a complete SD-packed state.");
         IArrayBox flags(parent_region, 5);
         flags.setVal(0);
         auto const& fine = raw_fine.array();
@@ -288,6 +344,8 @@ namespace{
             forced = forced_nonfinite->const_array();
         }
         const Real eps_internal = eps_p / (gamma - Real(1.0));
+        const int number_of_check_points = check_flux_points
+            ? amr_pp_check_points : sd_SPACE;
 
         AMREX_HOST_DEVICE_PARALLEL_FOR_3D_FLAG(runon, parent_region, i, j, k,
         {
@@ -297,14 +355,32 @@ namespace{
                     || !amrex::Math::isfinite(
                         amr_pp_parent_average(coarse, i, j, k, n));
             }
+
+            AMRRestrictionPPState Ubar{};
+            bool child_average_nonfinite = false;
+            if (limit_positivity) {
+                for (int n = 0; n < NEQ; ++n) {
+                    Ubar[n] = amr_pp_child_average(
+                        fine_const, i, j, k, n, child_ratio);
+                    child_average_nonfinite = child_average_nonfinite
+                        || !amrex::Math::isfinite(Ubar[n]);
+                }
+                if (child_average_nonfinite) {
+                    for (int n = 0; n < NEQ; ++n) {
+                        Ubar[n] = amr_pp_parent_average(
+                            coarse, i, j, k, n);
+                    }
+                }
+            }
+
             Real rho_bar = Real(0.0);
             Real internal_bar = Real(0.0);
             if (limit_positivity) {
-                rho_bar = amr_pp_parent_average(coarse, i, j, k, MRHO);
-                const Real mx_bar = amr_pp_parent_average(coarse, i, j, k, MU);
-                const Real my_bar = amr_pp_parent_average(coarse, i, j, k, MV);
-                const Real mz_bar = amr_pp_parent_average(coarse, i, j, k, MW);
-                const Real e_bar = amr_pp_parent_average(coarse, i, j, k, ME);
+                rho_bar = Ubar[MRHO];
+                const Real mx_bar = Ubar[MU];
+                const Real my_bar = Ubar[MV];
+                const Real mz_bar = Ubar[MW];
+                const Real e_bar = Ubar[ME];
                 internal_bar = amr_pp_internal_energy(
                     rho_bar, mx_bar, my_bar, mz_bar, e_bar);
             }
@@ -321,11 +397,11 @@ namespace{
             const bool forced_fallback = has_forced && forced(i,j,k,0) != 0;
             bool raw_nonfinite = false;
             Real rho_min = AMREX_REAL_MAX;
-            for (int joff = 0; joff < ratio[1]; ++joff) {
-                for (int ioff = 0; ioff < ratio[0]; ++ioff) {
-                    const int fi = i * ratio[0] + ioff;
-                    const int fj = j * ratio[1] + joff;
-                    for (int point = 0; point < amr_pp_check_points; ++point) {
+            for (int joff = 0; joff < child_ratio[1]; ++joff) {
+                for (int ioff = 0; ioff < child_ratio[0]; ++ioff) {
+                    const int fi = i * child_ratio[0] + ioff;
+                    const int fj = j * child_ratio[1] + joff;
+                    for (int point = 0; point < number_of_check_points; ++point) {
                         for (int n = 0; n < nvar; ++n) {
                             raw_nonfinite = raw_nonfinite
                                 || !amrex::Math::isfinite(
@@ -340,7 +416,8 @@ namespace{
                     }
                 }
             }
-            bool nonfinite = forced_fallback || raw_nonfinite;
+            bool nonfinite = forced_fallback || raw_nonfinite
+                || child_average_nonfinite;
 
             Real theta_rho = Real(1.0);
             if (nonfinite) {
@@ -354,11 +431,11 @@ namespace{
 
             Real internal_min = AMREX_REAL_MAX;
             if (limit_positivity && !nonfinite) {
-                for (int joff = 0; joff < ratio[1]; ++joff) {
-                    for (int ioff = 0; ioff < ratio[0]; ++ioff) {
-                        const int fi = i * ratio[0] + ioff;
-                        const int fj = j * ratio[1] + joff;
-                        for (int point = 0; point < amr_pp_check_points; ++point) {
+                for (int joff = 0; joff < child_ratio[1]; ++joff) {
+                    for (int ioff = 0; ioff < child_ratio[0]; ++ioff) {
+                        const int fi = i * child_ratio[0] + ioff;
+                        const int fj = j * child_ratio[1] + joff;
+                        for (int point = 0; point < number_of_check_points; ++point) {
                             const Real rho_raw = amr_pp_sample_child(
                                 fine_const, fi, fj, k, MRHO, point);
                             const Real rho = rho_bar + theta_rho * (rho_raw - rho_bar);
@@ -394,16 +471,18 @@ namespace{
                 && theta_rho < Real(1.0);
             flag(i,j,k,1) = limit_positivity && !nonfinite
                 && theta_internal < Real(1.0);
-            flag(i,j,k,2) = raw_nonfinite;
+            flag(i,j,k,2) = raw_nonfinite || child_average_nonfinite;
             flag(i,j,k,4) = flag(i,j,k,0) || flag(i,j,k,1);
 
             if (theta_rho < Real(1.0) || theta_internal < Real(1.0)) {
-                for (int joff = 0; joff < ratio[1]; ++joff) {
-                    for (int ioff = 0; ioff < ratio[0]; ++ioff) {
-                        const int fi = i * ratio[0] + ioff;
-                        const int fj = j * ratio[1] + joff;
+                for (int joff = 0; joff < child_ratio[1]; ++joff) {
+                    for (int ioff = 0; ioff < child_ratio[0]; ++ioff) {
+                        const int fi = i * child_ratio[0] + ioff;
+                        const int fj = j * child_ratio[1] + joff;
                         for (int n = 0; n < nvar; ++n) {
-                            const Real average = amr_pp_parent_average(coarse, i, j, k, n);
+                            const Real average = limit_positivity
+                                ? Ubar[n]
+                                : amr_pp_parent_average(coarse, i, j, k, n);
                             for (int off = 0; off < sd_SPACE; ++off) {
                                 const int comp = n * sd_SPACE + off;
                                 if (nonfinite) {
@@ -2338,8 +2417,8 @@ Mortar2D::interp (const FArrayBox& crse,
         "Mortar2D interpolation requires complete SD-packed variables.");
     if (type == Type::ScaleRef && m_prolongation_pp_enabled) {
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-            ncomp / sd_space > ME,
-            "Mortar2D prolongation PP requires density, momentum, and total energy.");
+            ncomp / sd_space == NEQ,
+            "Mortar2D prolongation PP requires a complete SD-packed state.");
     }
 
     if (type != Type::ScaleRef || !m_prolongation_pp_enabled) {
@@ -2367,7 +2446,8 @@ Mortar2D::interp (const FArrayBox& crse,
     });
 
     const auto counts = apply_parentwise_prolongation_pp(
-        raw_fine, crse, parent_region, crse_comp, ratio, ncomp/sd_space, true,
+        raw_fine, crse, parent_region, crse_comp, ratio, ncomp/sd_space,
+        true, true,
         m_pp_gamma, m_pp_eps_rho, m_pp_eps_p, nullptr, runon);
     m_pp_rho_events.fetch_add(counts.rho);
     m_pp_pressure_events.fetch_add(counts.pressure);
@@ -2541,6 +2621,7 @@ Mortar2D::restrict (const FArrayBox& fine,
     });
     const auto counts = apply_restriction_positivity(
         crse, target_crse_region, crse_comp, ncomp/sd_space,
+        nullptr, 0, IntVect(1),
         m_prolongation_pp_enabled,
         m_pp_gamma, m_pp_eps_rho, m_pp_eps_p, runon);
     m_restrict_rho_events.fetch_add(counts.rho);
@@ -3172,8 +3253,8 @@ HermiteWENO2D::interp (const FArrayBox& crse,
     }
     if (m_prolongation_pp_enabled) {
         AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-            ncomp / sd_space_hweno > ME,
-            "HermiteWENO2D prolongation PP requires density, momentum, and total energy.");
+            ncomp / sd_space_hweno == NEQ,
+            "HermiteWENO2D prolongation PP requires a complete SD-packed state.");
     }
     const Box parent_region = amrex::coarsen(target_fine_region, ratio);
     const Box full_fine_region = amrex::refine(parent_region, ratio);
@@ -3203,12 +3284,24 @@ HermiteWENO2D::interp (const FArrayBox& crse,
 
     const Box intermediate_parent_region = amrex::coarsen(
         by, IntVect(AMREX_D_DECL(1,ratio[1],1)));
+    const IntVect intermediate_child_ratio(AMREX_D_DECL(1,ratio[1],1));
     IArrayBox intermediate_nonfinite(intermediate_parent_region, 1);
     intermediate_nonfinite.setVal(0);
-    const Long intermediate_nonfinite_count = hweno_check_intermediate_finite(
-        tmpy, crse, intermediate_parent_region, ratio,
-        crse_comp, nvar, intermediate_nonfinite, runon);
-    m_pp_nonfinite_events.fetch_add(intermediate_nonfinite_count);
+    if (m_prolongation_pp_enabled) {
+        const auto y_counts = apply_parentwise_prolongation_pp(
+            tmpy, crse, intermediate_parent_region, crse_comp,
+            intermediate_child_ratio, nvar, true, false,
+            m_pp_gamma, m_pp_eps_rho, m_pp_eps_p, nullptr, runon);
+        m_pp_rho_events.fetch_add(y_counts.rho);
+        m_pp_pressure_events.fetch_add(y_counts.pressure);
+        m_pp_any_events.fetch_add(y_counts.any);
+        m_pp_nonfinite_events.fetch_add(y_counts.nonfinite);
+    } else {
+        const Long intermediate_nonfinite_count = hweno_check_intermediate_finite(
+            tmpy, crse, intermediate_parent_region, intermediate_child_ratio,
+            crse_comp, nvar, intermediate_nonfinite, runon);
+        m_pp_nonfinite_events.fetch_add(intermediate_nonfinite_count);
+    }
 
     srcarr = tmpy.const_array();
     FArrayBox raw_fine(full_fine_region, ncomp);
@@ -3225,7 +3318,7 @@ HermiteWENO2D::interp (const FArrayBox& crse,
 
     const auto counts = apply_parentwise_prolongation_pp(
         raw_fine, crse, parent_region, crse_comp, ratio, nvar,
-        m_prolongation_pp_enabled,
+        m_prolongation_pp_enabled, true,
         m_pp_gamma, m_pp_eps_rho, m_pp_eps_p,
         &intermediate_nonfinite, runon);
     m_pp_rho_events.fetch_add(counts.rho);
@@ -3298,6 +3391,7 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
     if (!inner_box.ok()) {
         const auto counts = apply_restriction_positivity(
             crse, target_crse_region, crse_comp, ncomp/sd_space_hweno,
+            nullptr, 0, IntVect(1),
             m_prolongation_pp_enabled,
             m_pp_gamma, m_pp_eps_rho, m_pp_eps_p, runon);
         m_restrict_rho_events.fetch_add(counts.rho);
@@ -3344,6 +3438,22 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
     {
         hweno_restrict_y(i, j, k, n, tmpyarr, srcarr, ratio, hy_f, hy_c);
     });
+    const IntVect y_source_ratio(AMREX_D_DECL(1,ratio[1],1));
+#if (AMREX_SPACEDIM == 2)
+    FArrayBox const* y_source = &fine;
+    const int y_source_comp = fine_comp;
+#else
+    FArrayBox const* y_source = &tmpz;
+    const int y_source_comp = 0;
+#endif
+    const auto y_counts = apply_restriction_positivity(
+        tmpy, by, 0, ncomp/sd_space_hweno,
+        y_source, y_source_comp, y_source_ratio,
+        m_prolongation_pp_enabled,
+        m_pp_gamma, m_pp_eps_rho, m_pp_eps_p, runon);
+    m_restrict_rho_events.fetch_add(y_counts.rho);
+    m_restrict_pressure_events.fetch_add(y_counts.pressure);
+    m_restrict_any_events.fetch_add(y_counts.any);
     amr_assert_fab_finite(
         tmpy, by, 0, ncomp, runon,
         "HWENO restriction produced a non-finite intermediate state.");
@@ -3360,11 +3470,21 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
     {
         hweno_restrict_x(i, j, k, n, crsearr, srcarr, ratio, hx_f, hx_c);
     });
+    const IntVect x_source_ratio(AMREX_D_DECL(ratio[0],1,1));
+    const auto x_counts = apply_restriction_positivity(
+        crse, inner_box, crse_comp, ncomp/sd_space_hweno,
+        &tmpy, 0, x_source_ratio,
+        m_prolongation_pp_enabled,
+        m_pp_gamma, m_pp_eps_rho, m_pp_eps_p, runon);
+    m_restrict_rho_events.fetch_add(x_counts.rho);
+    m_restrict_pressure_events.fetch_add(x_counts.pressure);
+    m_restrict_any_events.fetch_add(x_counts.any);
     amr_assert_fab_finite(
         crse, target_crse_region, crse_comp, ncomp, runon,
         "HWENO restriction produced a non-finite coarse polynomial.");
     const auto counts = apply_restriction_positivity(
         crse, target_crse_region, crse_comp, ncomp/sd_space_hweno,
+        nullptr, 0, IntVect(1),
         m_prolongation_pp_enabled,
         m_pp_gamma, m_pp_eps_rho, m_pp_eps_p, runon);
     m_restrict_rho_events.fetch_add(counts.rho);

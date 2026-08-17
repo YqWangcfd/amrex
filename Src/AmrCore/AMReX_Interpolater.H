@@ -1430,10 +1430,12 @@ private:
 /**
 * \brief Two-dimensional dimension-by-dimension HWENO mapper for SD AMR.
 *
-* Prolongation evaluates each reconstructed parent polynomial directly at
-* child solution points and can apply one parent-wise positivity limiter to
-* the complete sibling set. Restriction applies one conservative parent-wise
-* positivity limiter after the final coarse polynomial has been assembled.
+ * Prolongation evaluates each reconstructed parent polynomial directly at
+ * child solution points and applies a conservative sibling-wise positivity
+ * limiter after every dimensional reconstruction. Restriction likewise
+ * limits every reconstructed parent polynomial about the volume-weighted
+ * average of its source children. A final limiter also protects L2-seeded
+ * restriction cells at patch boundaries.
 */
 class HermiteWENO2D
     :

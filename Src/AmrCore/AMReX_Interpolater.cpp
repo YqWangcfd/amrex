@@ -2961,6 +2961,7 @@ HermiteWENO2D::hweno_interp_y (int i, int j, int k, int n,
                                Array4<Real> const& tmparr,
                                Array4<Real const> const& srcarr,
                                IntVect const& ratio,
+                               ProlongWeightMode mode,
                                Real hdir) noexcept
 {
     // In d-by-d interp(), y-stage loops over `by`, where x-index is already coarse.
@@ -2988,28 +2989,11 @@ HermiteWENO2D::hweno_interp_y (int i, int j, int k, int n,
         const auto cand = Build4Candidates(mm.ubar, m0.ubar, mp.ubar,
                                            mm.g1, mp.g1, mm.g2, mp.g2, hdir);
 
-        GpuArray<Real,4> beta{};
-        // Both children of one coarse cell must use the same reconstructed
-        // parent polynomial.  Child-dependent nonlinear weights preserve the
-        // mean of each candidate over the full parent, but not the combined
-        // mean of the left and right half-cell projections.
-        const SmoothRegion region = SmoothRegion::Parent;
-        for (int kk = 0; kk < 4; ++kk) {
-            beta[kk] = BetaFromCubic(cand[kk], region);
-        }
-        const auto omega = ZWeights(beta);
-
-        GpuArray<Real,4> bH{};
-        for (int m = 0; m < 4; ++m) {
-            for (int kk = 0; kk < 4; ++kk) {
-                bH[m] += omega[kk] * cand[kk][m];
-            }
-        }
-
-        Real ubar_parent = Real(0.0);
-        for (int s = 0; s < sd_order_hweno; ++s) {
-            ubar_parent += sd5_w0[s] * EvalCubic(bH, xi_sol[s]/2.0);
-        }
+        const auto pair = BuildProlongPolynomialPair(cand, m0.ubar, mode);
+        const auto& polynomial = (child == 0) ? pair.left : pair.right;
+        const Real ubar_parent = Real(0.5) * (
+            ProlongChildAverage(pair.left, 0)
+            + ProlongChildAverage(pair.right, 1));
         const Real cons_abs = std::abs(ubar_parent - m0.ubar);
         const Real cons_rel = cons_abs / amrex::max(std::abs(m0.ubar), Real(1.0e-14));
 #if !defined(AMREX_USE_GPU)
@@ -3028,7 +3012,7 @@ HermiteWENO2D::hweno_interp_y (int i, int j, int k, int n,
         for (int s = 0; s < sd_order_hweno; ++s) {
             const int off = box2point(line, s, 0, n);
             tmparr(i, j, k, off) = EvalCubic(
-                bH, hweno_child_coordinate(child, s));
+                polynomial, hweno_child_coordinate(child, s));
         }
     }
 }
@@ -3040,6 +3024,7 @@ HermiteWENO2D::hweno_interp_x (int i, int j, int k, int n,
                                Array4<Real> const& finearr,
                                Array4<Real const> const& srcarr,
                                IntVect const& ratio,
+                               ProlongWeightMode mode,
                                Real hdir) noexcept
 {
     const int ic = amrex::coarsen(i, ratio[0]);
@@ -3066,26 +3051,11 @@ HermiteWENO2D::hweno_interp_x (int i, int j, int k, int n,
         const auto cand = Build4Candidates(mm.ubar, m0.ubar, mp.ubar,
                                            mm.g1, mp.g1, mm.g2, mp.g2, hdir);
 
-        GpuArray<Real,4> beta{};
-        // Use one parent polynomial for both children so their paired
-        // projections retain the coarse-cell average exactly.
-        const SmoothRegion region = SmoothRegion::Parent;
-        for (int kk = 0; kk < 4; ++kk) {
-            beta[kk] = BetaFromCubic(cand[kk], region);
-        }
-        const auto omega = ZWeights(beta);
-
-        GpuArray<Real,4> bH{};
-        for (int m = 0; m < 4; ++m) {
-            for (int kk = 0; kk < 4; ++kk) {
-                bH[m] += omega[kk] * cand[kk][m];
-            }
-        }
-
-        Real ubar_parent = Real(0.0);
-        for (int s = 0; s < sd_order_hweno; ++s) {
-            ubar_parent += sd5_w0[s] * EvalCubic(bH, xi_sol[s]/2.0);
-        }
+        const auto pair = BuildProlongPolynomialPair(cand, m0.ubar, mode);
+        const auto& polynomial = (child == 0) ? pair.left : pair.right;
+        const Real ubar_parent = Real(0.5) * (
+            ProlongChildAverage(pair.left, 0)
+            + ProlongChildAverage(pair.right, 1));
         const Real cons_abs = std::abs(ubar_parent - m0.ubar);
         const Real cons_rel = cons_abs / amrex::max(std::abs(m0.ubar), Real(1.0e-14));
 #if !defined(AMREX_USE_GPU)
@@ -3104,7 +3074,7 @@ HermiteWENO2D::hweno_interp_x (int i, int j, int k, int n,
         for (int s = 0; s < sd_order_hweno; ++s) {
             const int off = box2point(s, line, 0, n);
             finearr(i, j, k, off) = EvalCubic(
-                bH, hweno_child_coordinate(child, s));
+                polynomial, hweno_child_coordinate(child, s));
         }
     }
 }
@@ -3264,6 +3234,12 @@ HermiteWENO2D::configure_amr_transfer_pp (bool enabled, Real gamma,
     m_pp_eps_p = eps_p;
 }
 
+void
+HermiteWENO2D::configure_prolong_weight_mode (ProlongWeightMode mode) noexcept
+{
+    m_prolong_weight_mode = mode;
+}
+
 AMRProlongationPPCounters
 HermiteWENO2D::take_prolongation_pp_counters () noexcept
 {
@@ -3322,6 +3298,7 @@ HermiteWENO2D::interp (const FArrayBox& crse,
 
     bool run_on_gpu = (runon == RunOn::Gpu && Gpu::inLaunchRegion());
     const int nvar = ncomp / sd_space_hweno;
+    const auto prolong_weight_mode = m_prolong_weight_mode;
 
     Array4<Real const> const& carr = crse.const_array(crse_comp);
     Array4<Real>       const& farr = fine.array(fine_comp);
@@ -3340,7 +3317,8 @@ HermiteWENO2D::interp (const FArrayBox& crse,
     const Real hy = crse_geom.CellSize(1);
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, ncomp/sd_space_hweno, i, j, k, n,
     {
-        hweno_interp_y(i, j, k, n, tmpyarr, srcarr, ratio, hy);
+        hweno_interp_y(
+            i, j, k, n, tmpyarr, srcarr, ratio, prolong_weight_mode, hy);
     });
 
     const Box intermediate_parent_region = amrex::coarsen(
@@ -3374,7 +3352,8 @@ HermiteWENO2D::interp (const FArrayBox& crse,
     const Real hx = crse_geom.CellSize(0);
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, full_fine_region, ncomp/sd_space_hweno, i, j, k, n,
     {
-        hweno_interp_x(i, j, k, n, raw, srcarr, ratio, hx);
+        hweno_interp_x(
+            i, j, k, n, raw, srcarr, ratio, prolong_weight_mode, hx);
     });
 
     const auto counts = apply_parentwise_prolongation_pp(

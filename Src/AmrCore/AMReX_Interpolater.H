@@ -1471,6 +1471,12 @@ public:
         Parent = 2
     };
 
+    enum class ProlongWeightMode : int
+    {
+        Conservative = 0,
+        Childwise = 1
+    };
+
     Box CoarseBox (const Box& fine, int ratio) override;
 
     Box CoarseBox (const Box& fine, const IntVect& ratio) override;
@@ -1505,11 +1511,19 @@ public:
 
     void configure_amr_transfer_pp (bool enabled, Real gamma,
                                     Real eps_rho, Real eps_p) noexcept;
+    void configure_prolong_weight_mode (ProlongWeightMode mode) noexcept;
     AMRProlongationPPCounters take_prolongation_pp_counters () noexcept;
     AMRRestrictionPPCounters take_restriction_pp_counters () noexcept;
 
 private:
+    struct ProlongPolynomialPair
+    {
+        GpuArray<Real,4> left{};
+        GpuArray<Real,4> right{};
+    };
+
     bool m_prolongation_pp_enabled = false;
+    ProlongWeightMode m_prolong_weight_mode = ProlongWeightMode::Conservative;
     Real m_pp_gamma = Real(1.4);
     Real m_pp_eps_rho = Real(1.0e-13);
     Real m_pp_eps_p = Real(1.0e-13);
@@ -1657,9 +1671,65 @@ private:
     }
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static GpuArray<Real,4> WeightedCubic (
+        GpuArray<GpuArray<Real,4>,4> const& candidates,
+        SmoothRegion region) noexcept
+    {
+        GpuArray<Real,4> beta{};
+        for (int k = 0; k < 4; ++k) {
+            beta[k] = BetaFromCubic(candidates[k], region);
+        }
+        const auto omega = ZWeights(beta);
+
+        GpuArray<Real,4> result{};
+        for (int degree = 0; degree < 4; ++degree) {
+            for (int k = 0; k < 4; ++k) {
+                result[degree] += omega[k] * candidates[k][degree];
+            }
+        }
+        return result;
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     static Real hweno_child_coordinate (int child, int solution_point) noexcept
     {
         return (xi_sol[solution_point] + Real(2*child - 1)) / Real(4.0);
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static Real ProlongChildAverage (
+        GpuArray<Real,4> const& polynomial, int child) noexcept
+    {
+        Real average = Real(0.0);
+        for (int s = 0; s < sd_order_hweno; ++s) {
+            average += sd5_w0[s] * EvalCubic(
+                polynomial, hweno_child_coordinate(child, s));
+        }
+        return average;
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static ProlongPolynomialPair BuildProlongPolynomialPair (
+        GpuArray<GpuArray<Real,4>,4> const& candidates,
+        Real parent_average,
+        ProlongWeightMode mode) noexcept
+    {
+        ProlongPolynomialPair pair;
+        if (mode == ProlongWeightMode::Conservative) {
+            pair.left = WeightedCubic(candidates, SmoothRegion::Parent);
+            pair.right = pair.left;
+            return pair;
+        }
+
+        pair.left = WeightedCubic(candidates, SmoothRegion::ChildLeft);
+        pair.right = WeightedCubic(candidates, SmoothRegion::ChildRight);
+        const Real paired_average = Real(0.5) * (
+            ProlongChildAverage(pair.left, 0)
+            + ProlongChildAverage(pair.right, 1));
+        const Real correction = parent_average - paired_average;
+        pair.left[0] += correction;
+        pair.right[0] += correction;
+        return pair;
     }
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
@@ -1696,6 +1766,7 @@ private:
                                 Array4<Real> const& tmparr,
                                 Array4<Real const> const& srcarr,
                                 IntVect const& ratio,
+                                ProlongWeightMode mode,
                                 Real hdir) noexcept;
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
@@ -1703,6 +1774,7 @@ private:
                                 Array4<Real> const& finearr,
                                 Array4<Real const> const& srcarr,
                                 IntVect const& ratio,
+                                ProlongWeightMode mode,
                                 Real hdir) noexcept;
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE

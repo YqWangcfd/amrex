@@ -5,9 +5,11 @@
 #include <AMReX_Interpolater.H>
 #include <AMReX_Interp_C.H>
 #include <AMReX_MFInterp_C.H>
+#include <AMReX_ParallelDescriptor.H>
 
 #include <climits>
 #include <cmath>
+#include <sstream>
 #include <IndexMacro.H>
 
 namespace amrex {
@@ -52,6 +54,56 @@ Mortar2D                  mortar_interp_scaleRef(Mortar2D::Type::ScaleRef);
 HermiteWENO2D             hermite_weno_interp;
 
 namespace{
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    void hweno_check_source_access(
+        Array4<Real const> const& srcarr,
+        IntVect const& ivm, IntVect const& ivc, IntVect const& ivp,
+        int off, int direction, int i, int j, int k, int n,
+        int child, int line, int solution_point) noexcept
+    {
+        const bool valid = srcarr.p != nullptr
+            && srcarr.contains(ivm)
+            && srcarr.contains(ivc)
+            && srcarr.contains(ivp)
+            && off >= 0 && off < srcarr.nComp();
+        if (valid) {
+            return;
+        }
+
+        AMREX_IF_ON_DEVICE((
+            AMREX_DEVICE_PRINTF(
+                "[HWENO_PROLONG_ACCESS_OOB] dir=%d fine=(%d,%d,%d) "
+                "var=%d child=%d line=%d point=%d off=%d ncomp=%d "
+                "ivm=(%d,%d,%d) ivc=(%d,%d,%d) ivp=(%d,%d,%d) "
+                "src=(%d:%d,%d:%d,%d:%d)\n",
+                direction, i, j, k, n, child, line, solution_point,
+                off, srcarr.nComp(),
+                ivm[0], ivm[1], ivm[2],
+                ivc[0], ivc[1], ivc[2],
+                ivp[0], ivp[1], ivp[2],
+                srcarr.begin.x, srcarr.end.x-1,
+                srcarr.begin.y, srcarr.end.y-1,
+                srcarr.begin.z, srcarr.end.z-1);
+            amrex::Abort();
+        ))
+        AMREX_IF_ON_HOST((
+            std::ostringstream message;
+            message << "[HWENO_PROLONG_ACCESS_OOB] rank="
+                    << ParallelDescriptor::MyProc()
+                    << " dir=" << (direction == 0 ? "x" : "y")
+                    << " fine=(" << i << "," << j << "," << k << ")"
+                    << " var=" << n << " child=" << child
+                    << " line=" << line << " point=" << solution_point
+                    << " off=" << off << " ncomp=" << srcarr.nComp()
+                    << " ivm=" << ivm << " ivc=" << ivc << " ivp=" << ivp
+                    << " src=(" << srcarr.begin.x << ":" << srcarr.end.x-1
+                    << "," << srcarr.begin.y << ":" << srcarr.end.y-1
+                    << "," << srcarr.begin.z << ":" << srcarr.end.z-1
+                    << ")";
+            amrex::Abort(message.str());
+        ))
+    }
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     Real amr_pp_internal_energy (Real rho, Real mx, Real my, Real mz, Real e) noexcept
@@ -2978,6 +3030,9 @@ HermiteWENO2D::hweno_interp_y (int i, int j, int k, int n,
         GpuArray<Real,sd_order_hweno> Um{}, U0{}, Up{};
         for (int s = 0; s < sd_order_hweno; ++s) {
             const int off = box2point(line, s, 0, n); // y-dir: line is x-node
+            hweno_check_source_access(
+                srcarr, ivm, ivc, ivp, off, 1,
+                i, j, k, n, child, line, s);
             Um[s] = srcarr(ivm[0], ivm[1], ivm[2], off);
             U0[s] = srcarr(ivc[0], ivc[1], ivc[2], off);
             Up[s] = srcarr(ivp[0], ivp[1], ivp[2], off);
@@ -3040,6 +3095,9 @@ HermiteWENO2D::hweno_interp_x (int i, int j, int k, int n,
         GpuArray<Real,sd_order_hweno> Um{}, U0{}, Up{};
         for (int s = 0; s < sd_order_hweno; ++s) {
             const int off = box2point(s, line, 0, n); // x-dir: line is y-node
+            hweno_check_source_access(
+                srcarr, ivm, ivc, ivp, off, 0,
+                i, j, k, n, child, line, s);
             Um[s] = srcarr(ivm[0], ivm[1], ivm[2], off);
             U0[s] = srcarr(ivc[0], ivc[1], ivc[2], off);
             Up[s] = srcarr(ivp[0], ivp[1], ivp[2], off);
@@ -3299,6 +3357,27 @@ HermiteWENO2D::interp (const FArrayBox& crse,
     bool run_on_gpu = (runon == RunOn::Gpu && Gpu::inLaunchRegion());
     const int nvar = ncomp / sd_space_hweno;
     const auto prolong_weight_mode = m_prolong_weight_mode;
+
+    Box required_coarse_stencil = amrex::coarsen(full_fine_region, ratio);
+    required_coarse_stencil.grow(IntVect(AMREX_D_DECL(1,1,0)));
+    if (!crse.box().contains(required_coarse_stencil)) {
+        const char* mode_name =
+            prolong_weight_mode == ProlongWeightMode::Conservative
+            ? "conservative" : "childwise";
+        std::ostringstream message;
+        message << "[HWENO_PROLONG_BOX_MISMATCH] rank="
+                << ParallelDescriptor::MyProc()
+                << " fine_region=" << fine_region
+                << " target_fine_region=" << target_fine_region
+                << " full_fine_region=" << full_fine_region
+                << " crse_box=" << crse.box()
+                << " required_coarse_stencil=" << required_coarse_stencil
+                << " ratio=" << ratio
+                << " crse_comp=" << crse_comp
+                << " ncomp=" << ncomp
+                << " weight_mode=" << mode_name;
+        amrex::Abort(message.str());
+    }
 
     Array4<Real const> const& carr = crse.const_array(crse_comp);
     Array4<Real>       const& farr = fine.array(fine_comp);

@@ -72,6 +72,9 @@ namespace{
         }
 
         AMREX_IF_ON_DEVICE((
+            const Dim3 ivm3 = ivm.dim3();
+            const Dim3 ivc3 = ivc.dim3();
+            const Dim3 ivp3 = ivp.dim3();
             AMREX_DEVICE_PRINTF(
                 "[HWENO_PROLONG_ACCESS_OOB] dir=%d fine=(%d,%d,%d) "
                 "var=%d child=%d line=%d point=%d off=%d ncomp=%d "
@@ -79,9 +82,9 @@ namespace{
                 "src=(%d:%d,%d:%d,%d:%d)\n",
                 direction, i, j, k, n, child, line, solution_point,
                 off, srcarr.nComp(),
-                ivm[0], ivm[1], ivm[2],
-                ivc[0], ivc[1], ivc[2],
-                ivp[0], ivp[1], ivp[2],
+                ivm3.x, ivm3.y, ivm3.z,
+                ivc3.x, ivc3.y, ivc3.z,
+                ivp3.x, ivp3.y, ivp3.z,
                 srcarr.begin.x, srcarr.end.x-1,
                 srcarr.begin.y, srcarr.end.y-1,
                 srcarr.begin.z, srcarr.end.z-1);
@@ -3033,9 +3036,9 @@ HermiteWENO2D::hweno_interp_y (int i, int j, int k, int n,
             hweno_check_source_access(
                 srcarr, ivm, ivc, ivp, off, 1,
                 i, j, k, n, child, line, s);
-            Um[s] = srcarr(ivm[0], ivm[1], ivm[2], off);
-            U0[s] = srcarr(ivc[0], ivc[1], ivc[2], off);
-            Up[s] = srcarr(ivp[0], ivp[1], ivp[2], off);
+            Um[s] = srcarr(ivm, off);
+            U0[s] = srcarr(ivc, off);
+            Up[s] = srcarr(ivp, off);
         }
 
         const auto mm = NodalToMoments1D(Um.data(), hdir);
@@ -3098,9 +3101,9 @@ HermiteWENO2D::hweno_interp_x (int i, int j, int k, int n,
             hweno_check_source_access(
                 srcarr, ivm, ivc, ivp, off, 0,
                 i, j, k, n, child, line, s);
-            Um[s] = srcarr(ivm[0], ivm[1], ivm[2], off);
-            U0[s] = srcarr(ivc[0], ivc[1], ivc[2], off);
-            Up[s] = srcarr(ivp[0], ivp[1], ivp[2], off);
+            Um[s] = srcarr(ivm, off);
+            U0[s] = srcarr(ivc, off);
+            Up[s] = srcarr(ivp, off);
         }
 
         const auto mm = NodalToMoments1D(Um.data(), hdir);
@@ -3169,12 +3172,12 @@ HermiteWENO2D::hweno_restrict_y (int i, int j, int k, int n,
         GpuArray<Real,sd_order_hweno> Um0{}, Um1{}, U00{}, U01{}, Up0{}, Up1{};
         for (int s = 0; s < sd_order_hweno; ++s) {
             const int off = box2point(line, s, 0, n);
-            Um0[s] = srcarr(ivmf0[0], ivmf0[1], ivmf0[2], off);
-            Um1[s] = srcarr(ivmf1[0], ivmf1[1], ivmf1[2], off);
-            U00[s] = srcarr(iv0f0[0], iv0f0[1], iv0f0[2], off);
-            U01[s] = srcarr(iv0f1[0], iv0f1[1], iv0f1[2], off);
-            Up0[s] = srcarr(ivpf0[0], ivpf0[1], ivpf0[2], off);
-            Up1[s] = srcarr(ivpf1[0], ivpf1[1], ivpf1[2], off);
+            Um0[s] = srcarr(ivmf0, off);
+            Um1[s] = srcarr(ivmf1, off);
+            U00[s] = srcarr(iv0f0, off);
+            U01[s] = srcarr(iv0f1, off);
+            Up0[s] = srcarr(ivpf0, off);
+            Up1[s] = srcarr(ivpf1, off);
         }
 
         const auto m_m5q4 = NodalToMoments1D(Um0.data(), hfine);
@@ -3241,12 +3244,12 @@ HermiteWENO2D::hweno_restrict_x (int i, int j, int k, int n,
         GpuArray<Real,sd_order_hweno> Um0{}, Um1{}, U00{}, U01{}, Up0{}, Up1{};
         for (int s = 0; s < sd_order_hweno; ++s) {
             const int off = box2point(s, line, 0, n);
-            Um0[s] = srcarr(ivmf0[0], ivmf0[1], ivmf0[2], off);
-            Um1[s] = srcarr(ivmf1[0], ivmf1[1], ivmf1[2], off);
-            U00[s] = srcarr(iv0f0[0], iv0f0[1], iv0f0[2], off);
-            U01[s] = srcarr(iv0f1[0], iv0f1[1], iv0f1[2], off);
-            Up0[s] = srcarr(ivpf0[0], ivpf0[1], ivpf0[2], off);
-            Up1[s] = srcarr(ivpf1[0], ivpf1[1], ivpf1[2], off);
+            Um0[s] = srcarr(ivmf0, off);
+            Um1[s] = srcarr(ivmf1, off);
+            U00[s] = srcarr(iv0f0, off);
+            U01[s] = srcarr(iv0f1, off);
+            Up0[s] = srcarr(ivpf0, off);
+            Up1[s] = srcarr(ivpf1, off);
         }
 
         const auto m_m5q4 = NodalToMoments1D(Um0.data(), hfine);

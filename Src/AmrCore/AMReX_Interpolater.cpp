@@ -221,9 +221,15 @@ namespace{
                 average_nonfinite = average_nonfinite
                     || !amrex::Math::isfinite(Ubar[n]);
             }
+            bool species_average_invalid = false;
+            for (int n = 0; n < NSP; ++n) {
+                species_average_invalid = species_average_invalid
+                    || Ubar[n] < Real(0.0);
+            }
             const Real rho_bar = Ubar[MRHO];
             const Real p_bar = amr_restriction_pressure(Ubar, gamma);
-            if (average_nonfinite || !amrex::Math::isfinite(p_bar)
+            if (average_nonfinite || species_average_invalid
+                || !amrex::Math::isfinite(p_bar)
                 || rho_bar < eps_rho || p_bar < eps_p) {
                 flag(i,j,k,2) = 1;
                 return;
@@ -240,6 +246,24 @@ namespace{
                     : Real(0.0);
             }
 
+            Real theta_species = Real(1.0);
+            if (!raw_nonfinite) {
+                for (int off = 0; off < sd_SPACE; ++off) {
+                    for (int n = 0; n < NSP; ++n) {
+                        const Real raw = state(i,j,k,n*sd_SPACE + off);
+                        const Real density_limited = Ubar[n]
+                            + theta_rho * (raw - Ubar[n]);
+                        if (density_limited < Real(0.0)) {
+                            const Real denominator = Ubar[n] - density_limited;
+                            theta_species = denominator > Real(1.0e-30)
+                                ? amrex::min(
+                                    theta_species, Ubar[n] / denominator)
+                                : Real(0.0);
+                        }
+                    }
+                }
+            }
+
             Real theta_pressure = Real(1.0);
             if (raw_nonfinite) {
                 theta_pressure = Real(0.0);
@@ -248,9 +272,10 @@ namespace{
                 AMRRestrictionPPState Uhat{};
                 for (int n = 0; n < NEQ; ++n) {
                     const Real raw = state(i,j,k,n*sd_SPACE + off);
-                    Uhat[n] = n == MRHO
-                        ? rho_bar + theta_rho * (raw - rho_bar)
-                        : raw;
+                    const Real density_limited = Ubar[n]
+                        + theta_rho * (raw - Ubar[n]);
+                    Uhat[n] = Ubar[n]
+                        + theta_species * (density_limited - Ubar[n]);
                 }
 
                 const Real p_hat = amr_restriction_pressure(Uhat, gamma);
@@ -278,7 +303,8 @@ namespace{
 
             flag(i,j,k,0) = !raw_nonfinite && theta_rho < Real(1.0);
             flag(i,j,k,1) = !raw_nonfinite && theta_pressure < Real(1.0);
-            flag(i,j,k,3) = flag(i,j,k,0) || flag(i,j,k,1);
+            flag(i,j,k,3) = flag(i,j,k,0) || flag(i,j,k,1)
+                || theta_species < Real(1.0);
             flag(i,j,k,3) = flag(i,j,k,3) || raw_nonfinite;
 
             if (flag(i,j,k,3) != 0) {
@@ -289,11 +315,12 @@ namespace{
                             continue;
                         }
                         const Real raw = state(i,j,k,n*sd_SPACE + off);
-                        const Real density_limited = n == MRHO
-                            ? rho_bar + theta_rho * (raw - rho_bar)
-                            : raw;
+                        const Real density_limited = Ubar[n]
+                            + theta_rho * (raw - Ubar[n]);
+                        const Real species_limited = Ubar[n]
+                            + theta_species * (density_limited - Ubar[n]);
                         state(i,j,k,n*sd_SPACE + off) = Ubar[n]
-                            + theta_pressure * (density_limited - Ubar[n]);
+                            + theta_pressure * (species_limited - Ubar[n]);
                     }
                 }
             }
@@ -381,6 +408,14 @@ namespace{
                 flag(i,j,k,3) = 1;
                 return;
             }
+            if (limit_positivity) {
+                for (int n = 0; n < NSP; ++n) {
+                    if (Ubar[n] < Real(0.0)) {
+                        flag(i,j,k,3) = 1;
+                        return;
+                    }
+                }
+            }
 
             const bool forced_fallback = has_forced && forced(i,j,k,0) != 0;
             bool raw_nonfinite = false;
@@ -416,6 +451,35 @@ namespace{
                     : Real(0.0);
             }
 
+            Real theta_species = Real(1.0);
+            if (limit_positivity && !nonfinite) {
+                for (int joff = 0; joff < child_ratio[1]; ++joff) {
+                    for (int ioff = 0; ioff < child_ratio[0]; ++ioff) {
+                        const int fi = i * child_ratio[0] + ioff;
+                        const int fj = j * child_ratio[1] + joff;
+                        for (int point = 0; point < number_of_check_points; ++point) {
+                            for (int n = 0; n < NSP; ++n) {
+                                const Real raw = amr_pp_sample_child(
+                                    fine_const, fi, fj, k, n, point);
+                                const Real density_limited = Ubar[n]
+                                    + theta_rho * (raw - Ubar[n]);
+                                if (density_limited < Real(0.0)) {
+                                    const Real denominator =
+                                        Ubar[n] - density_limited;
+                                    theta_species = denominator > Real(1.0e-30)
+                                        ? amrex::min(
+                                            theta_species,
+                                            Ubar[n] / denominator)
+                                        : Real(0.0);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            const Real theta_admissible = theta_rho * theta_species;
+
             Real internal_min = AMREX_REAL_MAX;
             if (limit_positivity && !nonfinite) {
                 for (int joff = 0; joff < child_ratio[1]; ++joff) {
@@ -425,13 +489,22 @@ namespace{
                         for (int point = 0; point < number_of_check_points; ++point) {
                             const Real rho_raw = amr_pp_sample_child(
                                 fine_const, fi, fj, k, MRHO, point);
-                            const Real rho = rho_bar + theta_rho * (rho_raw - rho_bar);
+                            const Real rho = rho_bar
+                                + theta_admissible * (rho_raw - rho_bar);
+                            const Real mx = Ubar[MU] + theta_admissible * (
+                                amr_pp_sample_child(
+                                    fine_const, fi, fj, k, MU, point) - Ubar[MU]);
+                            const Real my = Ubar[MV] + theta_admissible * (
+                                amr_pp_sample_child(
+                                    fine_const, fi, fj, k, MV, point) - Ubar[MV]);
+                            const Real mz = Ubar[MW] + theta_admissible * (
+                                amr_pp_sample_child(
+                                    fine_const, fi, fj, k, MW, point) - Ubar[MW]);
+                            const Real energy = Ubar[ME] + theta_admissible * (
+                                amr_pp_sample_child(
+                                    fine_const, fi, fj, k, ME, point) - Ubar[ME]);
                             const Real internal = amr_pp_internal_energy(
-                                rho,
-                                amr_pp_sample_child(fine_const, fi, fj, k, MU, point),
-                                amr_pp_sample_child(fine_const, fi, fj, k, MV, point),
-                                amr_pp_sample_child(fine_const, fi, fj, k, MW, point),
-                                amr_pp_sample_child(fine_const, fi, fj, k, ME, point));
+                                rho, mx, my, mz, energy);
                             if (!amrex::Math::isfinite(internal)) {
                                 raw_nonfinite = true;
                                 nonfinite = true;
@@ -459,9 +532,11 @@ namespace{
             flag(i,j,k,1) = limit_positivity && !nonfinite
                 && theta_internal < Real(1.0);
             flag(i,j,k,2) = raw_nonfinite;
-            flag(i,j,k,4) = flag(i,j,k,0) || flag(i,j,k,1);
+            flag(i,j,k,4) = flag(i,j,k,0) || flag(i,j,k,1)
+                || theta_species < Real(1.0);
 
-            if (theta_rho < Real(1.0) || theta_internal < Real(1.0)) {
+            if (theta_admissible < Real(1.0)
+                || theta_internal < Real(1.0)) {
                 for (int joff = 0; joff < child_ratio[1]; ++joff) {
                     for (int ioff = 0; ioff < child_ratio[0]; ++ioff) {
                         const int fi = i * child_ratio[0] + ioff;
@@ -477,9 +552,8 @@ namespace{
                                     continue;
                                 }
                                 const Real value = fine(fi,fj,k,comp);
-                                const Real density_limited = n == MRHO
-                                    ? rho_bar + theta_rho * (value - rho_bar)
-                                    : value;
+                                const Real density_limited = average
+                                    + theta_admissible * (value - average);
                                 fine(fi,fj,k,comp) = average
                                     + theta_internal * (density_limited - average);
                             }

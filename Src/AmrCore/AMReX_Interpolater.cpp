@@ -349,27 +349,15 @@ namespace{
 
         AMREX_HOST_DEVICE_PARALLEL_FOR_3D_FLAG(runon, parent_region, i, j, k,
         {
+            AMRRestrictionPPState Ubar{};
             bool parent_average_nonfinite = false;
             for (int n = 0; n < nvar; ++n) {
+                const Real average = amr_pp_parent_average(
+                    coarse, i, j, k, n);
                 parent_average_nonfinite = parent_average_nonfinite
-                    || !amrex::Math::isfinite(
-                        amr_pp_parent_average(coarse, i, j, k, n));
-            }
-
-            AMRRestrictionPPState Ubar{};
-            bool child_average_nonfinite = false;
-            if (limit_positivity) {
-                for (int n = 0; n < NEQ; ++n) {
-                    Ubar[n] = amr_pp_child_average(
-                        fine_const, i, j, k, n, child_ratio);
-                    child_average_nonfinite = child_average_nonfinite
-                        || !amrex::Math::isfinite(Ubar[n]);
-                }
-                if (child_average_nonfinite) {
-                    for (int n = 0; n < NEQ; ++n) {
-                        Ubar[n] = amr_pp_parent_average(
-                            coarse, i, j, k, n);
-                    }
+                    || !amrex::Math::isfinite(average);
+                if (limit_positivity) {
+                    Ubar[n] = average;
                 }
             }
 
@@ -416,8 +404,7 @@ namespace{
                     }
                 }
             }
-            bool nonfinite = forced_fallback || raw_nonfinite
-                || child_average_nonfinite;
+            bool nonfinite = forced_fallback || raw_nonfinite;
 
             Real theta_rho = Real(1.0);
             if (nonfinite) {
@@ -471,7 +458,7 @@ namespace{
                 && theta_rho < Real(1.0);
             flag(i,j,k,1) = limit_positivity && !nonfinite
                 && theta_internal < Real(1.0);
-            flag(i,j,k,2) = raw_nonfinite || child_average_nonfinite;
+            flag(i,j,k,2) = raw_nonfinite;
             flag(i,j,k,4) = flag(i,j,k,0) || flag(i,j,k,1);
 
             if (theta_rho < Real(1.0) || theta_internal < Real(1.0)) {

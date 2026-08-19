@@ -244,7 +244,8 @@ std::enable_if_t<IsFabArray<MF>::value && !std::is_same_v<Interp,MFInterpolater>
 FillPatchRestrict (MF& mf_crse_patch, int ccomp, MF const& mf_fine_patch, int fcomp,
                  int ncomp, IntVect const& ng, const Geometry& cgeom, const Geometry& fgeom,
                  Box const& dest_domain, const IntVect& ratio,
-                 Interp* mapper, const Vector<BCRec>& bcs, int bcscomp)
+                 Interp* mapper, const Vector<BCRec>& bcs, int bcscomp,
+                 iMultiFab const* fine_stencil_mask = nullptr)
 {
     BL_PROFILE("FillPatchRestrict(Fab)");
 
@@ -267,8 +268,15 @@ FillPatchRestrict (MF& mf_crse_patch, int ccomp, MF const& mf_fine_patch, int fc
             Box const& dbx = dfab.box();
 
             amrex::setBC(sbx,fdomain,bcscomp,0,ncomp,bcs,bcr);
-            mapper->restrict(sfab, fcomp, dfab, ccomp, ncomp, dbx, ratio,
-                           fgeom, cgeom, bcr, idummy, idummy, RunOn::Gpu);
+            if (fine_stencil_mask != nullptr) {
+                mapper->restrict_with_stencil_mask(
+                    sfab, fcomp, dfab, ccomp, ncomp, dbx, ratio,
+                    fgeom, cgeom, bcr, idummy, idummy,
+                    (*fine_stencil_mask)[mfi], RunOn::Gpu);
+            } else {
+                mapper->restrict(sfab, fcomp, dfab, ccomp, ncomp, dbx, ratio,
+                               fgeom, cgeom, bcr, idummy, idummy, RunOn::Gpu);
+            }
         }
     }
 }
@@ -1425,7 +1433,8 @@ InterpFromFineLevel (MF& mf, IntVect const& nghost, Real time,
                     Interp* mapper,
                     const Vector<BCRec>& bcs, int bcscomp,
                     const PreInterpHook& pre_interp,
-                    const PostInterpHook& post_interp)
+                    const PostInterpHook& post_interp,
+                    iMultiFab const* fine_stencil_mask = nullptr)
 {
     BL_PROFILE("InterpFromFineLevel");
     // Print() << "InterpFromFineLevel-4" << std::endl;
@@ -1436,6 +1445,18 @@ InterpFromFineLevel (MF& mf, IntVect const& nghost, Real time,
 
     const BoxArray& ba = fmf.boxArray();
     const DistributionMapping& dm = fmf.DistributionMap();
+
+    if (fine_stencil_mask != nullptr) {
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+            fine_stencil_mask->boxArray() == ba,
+            "InterpFromFineLevel: stencil mask BoxArray must match fine data");
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+            fine_stencil_mask->DistributionMap() == dm,
+            "InterpFromFineLevel: stencil mask DistributionMapping must match fine data");
+        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+            fine_stencil_mask->nGrowVect().allGE(nghost),
+            "InterpFromFineLevel: stencil mask has insufficient ghost cells");
+    }
 
     const IndexType& typ = ba.ixType();
 
@@ -1496,7 +1517,7 @@ InterpFromFineLevel (MF& mf, IntVect const& nghost, Real time,
     detail::call_interp_hook(pre_interp, mf_crse_patch, 0, ncomp);
 
     FillPatchRestrict(mf_crse_patch, 0, fmf, 0, ncomp, nghost, cgeom, fgeom, cdomain_g,
-                      ratio, mapper, bcs, bcscomp);
+                      ratio, mapper, bcs, bcscomp, fine_stencil_mask);
 
     mf.ParallelCopy(mf_crse_patch, scomp, 0, ncomp, send_ghost, recv_ghost,
                     cgeom.periodicity());
@@ -1515,6 +1536,33 @@ InterpFromFineLevel (MF& mf, IntVect const& nghost, Real time,
     }
 
     // cbc(mf, 0, ncomp, mf.nGrowVect(), time, cbccomp);
+}
+
+template <typename MF, typename BC, typename Interp, typename PreInterpHook, typename PostInterpHook>
+std::enable_if_t<IsFabArray<MF>::value>
+InterpFromFineLevelMasked (MF& mf, Real time,
+                           const MF& fmf,
+                           iMultiFab const& fine_stencil_mask,
+                           int scomp, int dcomp, int ncomp,
+                           const Geometry& cgeom, const Geometry& fgeom,
+                           BC& cbc, int cbccomp,
+                           BC& fbc, int fbccomp,
+                           const IntVect& ratio,
+                           Interp* mapper,
+                           const Vector<BCRec>& bcs, int bcscomp,
+                           const PreInterpHook& pre_interp,
+                           const PostInterpHook& post_interp)
+{
+#ifdef AMREX_USE_EB
+    EB2::IndexSpace const* index_space = EB2::TopIndexSpaceIfPresent();
+#else
+    EB2::IndexSpace const* index_space = nullptr;
+#endif
+    InterpFromFineLevel(
+        mf, mf.nGrowVect(), time, index_space,
+        fmf, scomp, dcomp, ncomp, cgeom, fgeom,
+        cbc, cbccomp, fbc, fbccomp, ratio, mapper, bcs, bcscomp,
+        pre_interp, post_interp, &fine_stencil_mask);
 }
 
 template <typename MF, typename BC, typename Interp, typename PreInterpHook, typename PostInterpHook>

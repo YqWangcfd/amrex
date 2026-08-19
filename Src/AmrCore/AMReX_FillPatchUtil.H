@@ -606,6 +606,27 @@ namespace amrex
                            const PostInterpHook& post_interp = {});
 
     /**
+     * \brief Restrict fine-level data while forwarding a per-fine-cell
+     * stencil provenance mask to interpolaters that support it.
+     */
+    template <typename MF, typename BC, typename Interp,
+              typename PreInterpHook=NullInterpHook<typename MF::FABType::value_type>,
+              typename PostInterpHook=NullInterpHook<typename MF::FABType::value_type> >
+    std::enable_if_t<IsFabArray<MF>::value>
+    InterpFromFineLevelMasked (MF& mf, Real time,
+                               const MF& fmf,
+                               iMultiFab const& fine_stencil_mask,
+                               int scomp, int dcomp, int ncomp,
+                               const Geometry& cgeom, const Geometry& fgeom,
+                               BC& cbc, int cbccomp,
+                               BC& fbc, int fbccomp,
+                               const IntVect& ratio,
+                               Interp* mapper,
+                               const Vector<BCRec>& bcs, int bcscomp,
+                               const PreInterpHook& pre_interp = {},
+                               const PostInterpHook& post_interp = {});
+
+    /**
      * \brief Fill with interpolation of coarse level data
      *
      * \tparam MF the MultiFab/FabArray type

@@ -105,6 +105,28 @@ public:
         amrex::Abort("Interpolater::restrict not implemented");
     }
 
+    virtual void restrict_with_stencil_mask (
+                        const FArrayBox& fine,
+                        int              fine_comp,
+                        FArrayBox&       crse,
+                        int              crse_comp,
+                        int              ncomp,
+                        const Box&       crse_region,
+                        const IntVect&   ratio,
+                        const Geometry&  fine_geom,
+                        const Geometry&  crse_geom,
+                        Vector<BCRec> const& bcr,
+                        int              actual_comp,
+                        int              actual_state,
+                        IArrayBox const& fine_stencil_mask,
+                        RunOn            runon)
+    {
+        amrex::ignore_unused(fine_stencil_mask);
+        restrict(fine, fine_comp, crse, crse_comp, ncomp, crse_region,
+                 ratio, fine_geom, crse_geom, bcr,
+                 actual_comp, actual_state, runon);
+    }
+
     /**
     * \brief Coarse to fine interpolation in space for face-based data.
     *
@@ -1404,9 +1426,15 @@ public:
 
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
-    void mortar_restrict(const int i, const int j, const int k, const int n, 
+    void mortar_restrict(const int i, const int j, const int k, const int n,
                 Array4<Real> const crsearr, Array4<const Real> const& finearr,
-                const IntVect&   ratio);
+                const IntVect& ratio);
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static void mortar_restrict_with_type(
+                const int i, const int j, const int k, const int n,
+                Array4<Real> const crsearr, Array4<const Real> const& finearr,
+                const IntVect& ratio, Type restriction_type);
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     void mortar_restrict_flatten(const int i, const int j, const int k, const int n, 
@@ -1433,9 +1461,12 @@ private:
  * Prolongation evaluates each reconstructed parent polynomial directly at
  * child solution points and applies a conservative sibling-wise positivity
  * limiter after every dimensional reconstruction. Restriction requires a
- * complete two-fine-cell ghost stencil and applies HWENO over the full target
- * region, limiting every reconstructed parent polynomial about the
- * volume-weighted average of its source children.
+ * complete two-fine-cell ghost stencil.  A provenance mask may be supplied
+ * during restriction: cells whose full HWENO stencil is backed by valid fine,
+ * periodic, or physical-BC data use HWENO; cells touching coarse-to-fine
+ * prolongation ghosts retain the L2 restriction.  Positivity limiting is
+ * applied to every resulting parent polynomial about the volume-weighted
+ * average of its valid source children.
 */
 class HermiteWENO2D
     :
@@ -1509,6 +1540,22 @@ public:
                    int              actual_state,
                    RunOn            runon) override;
 
+    void restrict_with_stencil_mask (
+                   const FArrayBox& fine,
+                   int              fine_comp,
+                   FArrayBox&       crse,
+                   int              crse_comp,
+                   int              ncomp,
+                   const Box&       crse_region,
+                   const IntVect&   ratio,
+                   const Geometry&  fine_geom,
+                   const Geometry&  crse_geom,
+                   Vector<BCRec> const& bcr,
+                   int              actual_comp,
+                   int              actual_state,
+                   IArrayBox const& fine_stencil_mask,
+                   RunOn            runon) override;
+
     void configure_amr_transfer_pp (bool enabled, Real gamma,
                                     Real eps_rho, Real eps_p) noexcept;
     void configure_prolong_weight_mode (ProlongWeightMode mode) noexcept;
@@ -1534,6 +1581,21 @@ private:
     std::atomic<Long> m_restrict_rho_events{0};
     std::atomic<Long> m_restrict_pressure_events{0};
     std::atomic<Long> m_restrict_any_events{0};
+
+    void restrict_impl (const FArrayBox& fine,
+                        int              fine_comp,
+                        FArrayBox&       crse,
+                        int              crse_comp,
+                        int              ncomp,
+                        const Box&       crse_region,
+                        const IntVect&   ratio,
+                        const Geometry&  fine_geom,
+                        const Geometry&  crse_geom,
+                        Vector<BCRec> const& bcr,
+                        int              actual_comp,
+                        int              actual_state,
+                        IArrayBox const* fine_stencil_mask,
+                        RunOn            runon);
 
     static constexpr Real sd5_w0[sd_order_hweno] = {
         Real(0.0838906142333418), Real(0.2627760524333247), Real(0.3066666666666672),
@@ -1751,6 +1813,51 @@ private:
         in.Gjm1_2 = Real(0.5) * (m_m5q4.g2   + m_m3q4.g2);
         in.Gjp1_2 = Real(0.5) * (m_p3q4.g2   + m_p5q4.g2);
         return in;
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static bool restriction_stencil_is_hweno_eligible (
+        int i, int j, int k,
+        Array4<int const> const& mask,
+        IntVect const& ratio) noexcept
+    {
+        const int ilo = ratio[0] * (i - 1);
+        const int ihi = ratio[0] * (i + 2) - 1;
+#if (AMREX_SPACEDIM >= 2)
+        const int jlo = ratio[1] * (j - 1);
+        const int jhi = ratio[1] * (j + 2) - 1;
+#else
+        const int jlo = j;
+        const int jhi = j;
+#endif
+        for (int jj = jlo; jj <= jhi; ++jj) {
+            for (int ii = ilo; ii <= ihi; ++ii) {
+                if (!mask.contains(ii,jj,k) || mask(ii,jj,k,0) == 0) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static bool restriction_y_stencil_is_hweno_eligible (
+        int ifine, int jcrse, int k,
+        Array4<int const> const& mask,
+        IntVect const& ratio) noexcept
+    {
+#if (AMREX_SPACEDIM >= 2)
+        const int jlo = ratio[1] * (jcrse - 1);
+        const int jhi = ratio[1] * (jcrse + 2) - 1;
+        for (int jj = jlo; jj <= jhi; ++jj) {
+            if (!mask.contains(ifine,jj,k) || mask(ifine,jj,k,0) == 0) {
+                return false;
+            }
+        }
+#else
+        amrex::ignore_unused(ifine, jcrse, k, mask, ratio);
+#endif
+        return true;
     }
 
 

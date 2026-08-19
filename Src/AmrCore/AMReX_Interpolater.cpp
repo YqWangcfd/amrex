@@ -210,8 +210,7 @@ namespace{
         FArrayBox& crse, Box const& region, int crse_comp, int nvar,
         FArrayBox const* source, int source_comp,
         IntVect const& source_ratio,
-        bool enabled, Real gamma, Real eps_rho, Real eps_p, RunOn runon,
-        IArrayBox const* active_cells = nullptr)
+        bool enabled, Real gamma, Real eps_rho, Real eps_p, RunOn runon)
     {
         AMRRestrictionPPCounters counts;
         if (!enabled || !region.ok()) {
@@ -234,14 +233,6 @@ namespace{
         flags.setVal(0);
         auto const& state = crse.array(crse_comp);
         auto const& flag = flags.array();
-        Array4<int const> active;
-        const bool has_active_cells = active_cells != nullptr;
-        if (has_active_cells) {
-            AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-                active_cells->box().contains(region),
-                "AMR restriction PP active mask does not contain region");
-            active = active_cells->const_array();
-        }
         Array4<Real const> source_state;
         const bool has_source = source != nullptr;
         if (has_source) {
@@ -250,9 +241,6 @@ namespace{
 
         AMREX_HOST_DEVICE_PARALLEL_FOR_3D_FLAG(runon, region, i, j, k,
         {
-            if (has_active_cells && active(i,j,k,0) == 0) {
-                return;
-            }
             AMRRestrictionPPState Ubar{};
             bool average_nonfinite = false;
             bool raw_nonfinite = false;
@@ -3501,49 +3489,6 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
                          int              actual_state,
                          RunOn            runon)
 {
-    restrict_impl(fine, fine_comp, crse, crse_comp, ncomp, crse_region,
-                  ratio, fine_geom, crse_geom, bcr,
-                  actual_comp, actual_state, nullptr, runon);
-}
-
-void
-HermiteWENO2D::restrict_with_stencil_mask (
-                         const FArrayBox& fine,
-                         int              fine_comp,
-                         FArrayBox&       crse,
-                         int              crse_comp,
-                         int              ncomp,
-                         const Box&       crse_region,
-                         const IntVect&   ratio,
-                         const Geometry&  fine_geom,
-                         const Geometry&  crse_geom,
-                         Vector<BCRec> const& bcr,
-                         int              actual_comp,
-                         int              actual_state,
-                         IArrayBox const& fine_stencil_mask,
-                         RunOn            runon)
-{
-    restrict_impl(fine, fine_comp, crse, crse_comp, ncomp, crse_region,
-                  ratio, fine_geom, crse_geom, bcr,
-                  actual_comp, actual_state, &fine_stencil_mask, runon);
-}
-
-void
-HermiteWENO2D::restrict_impl (const FArrayBox& fine,
-                         int              fine_comp,
-                         FArrayBox&       crse,
-                         int              crse_comp,
-                         int              ncomp,
-                         const Box&       crse_region,
-                         const IntVect&   ratio,
-                         const Geometry&  fine_geom,
-                         const Geometry&  crse_geom,
-                         Vector<BCRec> const& bcr,
-                         int              actual_comp,
-                         int              actual_state,
-                         IArrayBox const* fine_stencil_mask,
-                         RunOn            runon)
-{
     BL_PROFILE("HermiteWENO2D::restrict()");
     amrex::ignore_unused(bcr, actual_comp, actual_state);
 
@@ -3560,40 +3505,10 @@ HermiteWENO2D::restrict_impl (const FArrayBox& fine,
         return;
     }
 
-    const Box required_fine_stencil = amrex::refine(
-        amrex::grow(target_crse_region, IntVect(1)), ratio);
-    if (!fine.box().contains(required_fine_stencil)) {
-        std::ostringstream message;
-        message << "[HWENO_RESTRICT_BOX_MISMATCH] rank="
-                << ParallelDescriptor::MyProc()
-                << " fine_box=" << fine.box()
-                << " target_crse_region=" << target_crse_region
-                << " required_fine_stencil=" << required_fine_stencil
-                << " ratio=" << ratio
-                << " fine_comp=" << fine_comp
-                << " crse_comp=" << crse_comp
-                << " ncomp=" << ncomp;
-        amrex::Abort(message.str());
-    }
-    if (fine_stencil_mask != nullptr) {
-        AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
-            fine_stencil_mask->box().contains(required_fine_stencil),
-            "HWENO restriction provenance mask does not contain the required stencil");
-#if (AMREX_SPACEDIM != 2)
-        amrex::Abort(
-            "HWENO restriction provenance masking is implemented only in 2D.");
-#endif
-    }
-
     bool run_on_gpu = (runon == RunOn::Gpu && Gpu::inLaunchRegion());
     amrex::ignore_unused(run_on_gpu);
     Array4<Real const> const& finearr = fine.const_array(fine_comp);
     Array4<Real>       const& crsearr = crse.array(crse_comp);
-    Array4<int const> fine_mask;
-    const bool has_fine_mask = fine_stencil_mask != nullptr;
-    if (has_fine_mask) {
-        fine_mask = fine_stencil_mask->const_array();
-    }
 
 #if (AMREX_SPACEDIM == 2)
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(
@@ -3603,11 +3518,25 @@ HermiteWENO2D::restrict_impl (const FArrayBox& fine,
             i, j, k, n, crsearr, finearr, ratio,
             Mortar2D::Type::ScaleRef);
     });
+#else
+    amrex::ignore_unused(fine_geom, crse_geom);
 #endif
 
+    const Box inner_box = amrex::grow(target_crse_region, -1);
+    if (!inner_box.ok()) {
+        const auto counts = apply_restriction_positivity(
+            crse, target_crse_region, crse_comp, ncomp/sd_space_hweno,
+            &fine, fine_comp, ratio,
+            m_prolongation_pp_enabled,
+            m_pp_gamma, m_pp_eps_rho, m_pp_eps_p, runon);
+        m_restrict_rho_events.fetch_add(counts.rho);
+        m_restrict_pressure_events.fetch_add(counts.pressure);
+        m_restrict_any_events.fetch_add(counts.any);
+        return;
+    }
+
 #if (AMREX_SPACEDIM == 3)
-    Box bz = amrex::refine(
-        target_crse_region, IntVect(ratio[0],ratio[1],1));
+    Box bz = amrex::refine(inner_box, IntVect(ratio[0],ratio[1],1));
     FArrayBox tmpz(bz, ncomp);
 #ifdef AMREX_USE_GPU
     Elixir tmpz_eli;
@@ -3625,20 +3554,14 @@ HermiteWENO2D::restrict_impl (const FArrayBox& fine,
 
 #if (AMREX_SPACEDIM >= 2)
     Box by = amrex::refine(
-        target_crse_region, IntVect(AMREX_D_DECL(ratio[0],1,1)));
+        inner_box, IntVect(AMREX_D_DECL(ratio[0],1,1)));
     by.grow(IntVect(AMREX_D_DECL(ratio[0],0,0)));
     FArrayBox tmpy(by, ncomp);
-    tmpy.setVal(Real(0.0));
-    IArrayBox tmpy_hweno_ok(by, 1);
-    tmpy_hweno_ok.setVal(0);
 #ifdef AMREX_USE_GPU
     Elixir tmpy_eli;
-    Elixir tmpy_hweno_ok_eli;
     if (run_on_gpu) { tmpy_eli = tmpy.elixir(); }
-    if (run_on_gpu) { tmpy_hweno_ok_eli = tmpy_hweno_ok.elixir(); }
 #endif
     Array4<Real> const& tmpyarr = tmpy.array();
-    Array4<int> const& tmpy_ok = tmpy_hweno_ok.array();
 #if (AMREX_SPACEDIM == 2)
     Array4<Real const> srcarr = finearr;
 #else
@@ -3647,17 +3570,9 @@ HermiteWENO2D::restrict_impl (const FArrayBox& fine,
 
     const Real hy_f = fine_geom.CellSize(1);
     const Real hy_c = crse_geom.CellSize(1);
-    AMREX_HOST_DEVICE_PARALLEL_FOR_3D_FLAG(runon, by, i, j, k,
-    {
-        tmpy_ok(i,j,k,0) = (!has_fine_mask
-            || restriction_y_stencil_is_hweno_eligible(
-                i, j, k, fine_mask, ratio)) ? 1 : 0;
-    });
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, by, ncomp/sd_space_hweno, i, j, k, n,
     {
-        if (tmpy_ok(i,j,k,0) != 0) {
-            hweno_restrict_y(i, j, k, n, tmpyarr, srcarr, ratio, hy_f, hy_c);
-        }
+        hweno_restrict_y(i, j, k, n, tmpyarr, srcarr, ratio, hy_f, hy_c);
     });
     const IntVect y_source_ratio(AMREX_D_DECL(1,ratio[1],1));
 #if (AMREX_SPACEDIM == 2)
@@ -3671,8 +3586,7 @@ HermiteWENO2D::restrict_impl (const FArrayBox& fine,
         tmpy, by, 0, ncomp/sd_space_hweno,
         y_source, y_source_comp, y_source_ratio,
         m_prolongation_pp_enabled,
-        m_pp_gamma, m_pp_eps_rho, m_pp_eps_p, runon,
-        &tmpy_hweno_ok);
+        m_pp_gamma, m_pp_eps_rho, m_pp_eps_p, runon);
     m_restrict_rho_events.fetch_add(y_counts.rho);
     m_restrict_pressure_events.fetch_add(y_counts.pressure);
     m_restrict_any_events.fetch_add(y_counts.any);
@@ -3688,34 +3602,17 @@ HermiteWENO2D::restrict_impl (const FArrayBox& fine,
 #endif
     const Real hx_f = fine_geom.CellSize(0);
     const Real hx_c = crse_geom.CellSize(0);
-    IArrayBox crse_hweno_ok(target_crse_region, 1);
-    crse_hweno_ok.setVal(0);
-#ifdef AMREX_USE_GPU
-    Elixir crse_hweno_ok_eli;
-    if (run_on_gpu) { crse_hweno_ok_eli = crse_hweno_ok.elixir(); }
-#endif
-    Array4<int> const& crse_ok = crse_hweno_ok.array();
-    AMREX_HOST_DEVICE_PARALLEL_FOR_3D_FLAG(
-        runon, target_crse_region, i, j, k,
-    {
-        crse_ok(i,j,k,0) = (!has_fine_mask
-            || restriction_stencil_is_hweno_eligible(
-                i, j, k, fine_mask, ratio)) ? 1 : 0;
-    });
     AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(
-        runon, target_crse_region, ncomp/sd_space_hweno, i, j, k, n,
+        runon, inner_box, ncomp/sd_space_hweno, i, j, k, n,
     {
-        if (crse_ok(i,j,k,0) != 0) {
-            hweno_restrict_x(i, j, k, n, crsearr, srcarr, ratio, hx_f, hx_c);
-        }
+        hweno_restrict_x(i, j, k, n, crsearr, srcarr, ratio, hx_f, hx_c);
     });
     const IntVect x_source_ratio(AMREX_D_DECL(ratio[0],1,1));
     const auto x_counts = apply_restriction_positivity(
-        crse, target_crse_region, crse_comp, ncomp/sd_space_hweno,
+        crse, inner_box, crse_comp, ncomp/sd_space_hweno,
         &tmpy, 0, x_source_ratio,
         m_prolongation_pp_enabled,
-        m_pp_gamma, m_pp_eps_rho, m_pp_eps_p, runon,
-        &crse_hweno_ok);
+        m_pp_gamma, m_pp_eps_rho, m_pp_eps_p, runon);
     m_restrict_rho_events.fetch_add(x_counts.rho);
     m_restrict_pressure_events.fetch_add(x_counts.pressure);
     m_restrict_any_events.fetch_add(x_counts.any);

@@ -1432,10 +1432,10 @@ private:
 *
  * Prolongation evaluates each reconstructed parent polynomial directly at
  * child solution points and applies a conservative sibling-wise positivity
- * limiter after every dimensional reconstruction. Restriction likewise
- * limits every reconstructed parent polynomial about the volume-weighted
- * average of its source children. A final limiter also protects L2-seeded
- * restriction cells at patch boundaries.
+ * limiter after every dimensional reconstruction. Restriction requires a
+ * complete two-fine-cell ghost stencil and applies HWENO over the full target
+ * region, limiting every reconstructed parent polynomial about the
+ * volume-weighted average of its source children.
 */
 class HermiteWENO2D
     :

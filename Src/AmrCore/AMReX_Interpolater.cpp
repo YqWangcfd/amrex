@@ -3487,43 +3487,34 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
     }
 
     const Box target_crse_region = crse_region & crse.box();
+    if (!target_crse_region.ok()) {
+        return;
+    }
+
+    const Box required_fine_stencil = amrex::refine(
+        amrex::grow(target_crse_region, IntVect(1)), ratio);
+    if (!fine.box().contains(required_fine_stencil)) {
+        std::ostringstream message;
+        message << "[HWENO_RESTRICT_BOX_MISMATCH] rank="
+                << ParallelDescriptor::MyProc()
+                << " fine_box=" << fine.box()
+                << " target_crse_region=" << target_crse_region
+                << " required_fine_stencil=" << required_fine_stencil
+                << " ratio=" << ratio
+                << " fine_comp=" << fine_comp
+                << " crse_comp=" << crse_comp
+                << " ncomp=" << ncomp;
+        amrex::Abort(message.str());
+    }
+
     bool run_on_gpu = (runon == RunOn::Gpu && Gpu::inLaunchRegion());
     amrex::ignore_unused(run_on_gpu);
     Array4<Real const> const& finearr = fine.const_array(fine_comp);
     Array4<Real>       const& crsearr = crse.array(crse_comp);
 
-    // A centered HWENO restriction needs one neighboring parent on each
-    // side.  At a FAB boundary those neighbors live in fine ghost cells,
-    // whose provenance depends on the patch layout.  Seed the complete
-    // covered region with the conservative L2 restriction, then use HWENO
-    // only where its full stencil is contained in the fine valid region.
-#if (AMREX_SPACEDIM == 2)
-    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(
-        runon, target_crse_region, ncomp/sd_space_hweno, i, j, k, n,
-    {
-        mortar_interp_scaleRef.mortar_restrict(
-            i, j, k, n, crsearr, finearr, ratio);
-    });
-#else
-    amrex::ignore_unused(
-        fine_geom, crse_geom, bcr, actual_comp, actual_state);
-#endif
-
-    const Box inner_box = amrex::grow(target_crse_region, -1);
-    if (!inner_box.ok()) {
-        const auto counts = apply_restriction_positivity(
-            crse, target_crse_region, crse_comp, ncomp/sd_space_hweno,
-            nullptr, 0, IntVect(1),
-            m_prolongation_pp_enabled,
-            m_pp_gamma, m_pp_eps_rho, m_pp_eps_p, runon);
-        m_restrict_rho_events.fetch_add(counts.rho);
-        m_restrict_pressure_events.fetch_add(counts.pressure);
-        m_restrict_any_events.fetch_add(counts.any);
-        return;
-    }
-
 #if (AMREX_SPACEDIM == 3)
-    Box bz = amrex::refine(inner_box, IntVect(ratio[0],ratio[1],1));
+    Box bz = amrex::refine(
+        target_crse_region, IntVect(ratio[0],ratio[1],1));
     FArrayBox tmpz(bz, ncomp);
 #ifdef AMREX_USE_GPU
     Elixir tmpz_eli;
@@ -3540,7 +3531,8 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
 #endif
 
 #if (AMREX_SPACEDIM >= 2)
-    Box by = amrex::refine(inner_box, IntVect(AMREX_D_DECL(ratio[0],1,1)));
+    Box by = amrex::refine(
+        target_crse_region, IntVect(AMREX_D_DECL(ratio[0],1,1)));
     by.grow(IntVect(AMREX_D_DECL(ratio[0],0,0)));
     FArrayBox tmpy(by, ncomp);
 #ifdef AMREX_USE_GPU
@@ -3588,13 +3580,14 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
 #endif
     const Real hx_f = fine_geom.CellSize(0);
     const Real hx_c = crse_geom.CellSize(0);
-    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(runon, inner_box, ncomp/sd_space_hweno, i, j, k, n,
+    AMREX_HOST_DEVICE_PARALLEL_FOR_4D_FLAG(
+        runon, target_crse_region, ncomp/sd_space_hweno, i, j, k, n,
     {
         hweno_restrict_x(i, j, k, n, crsearr, srcarr, ratio, hx_f, hx_c);
     });
     const IntVect x_source_ratio(AMREX_D_DECL(ratio[0],1,1));
     const auto x_counts = apply_restriction_positivity(
-        crse, inner_box, crse_comp, ncomp/sd_space_hweno,
+        crse, target_crse_region, crse_comp, ncomp/sd_space_hweno,
         &tmpy, 0, x_source_ratio,
         m_prolongation_pp_enabled,
         m_pp_gamma, m_pp_eps_rho, m_pp_eps_p, runon);

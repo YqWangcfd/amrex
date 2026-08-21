@@ -1437,12 +1437,13 @@ private:
 * \brief Two-dimensional dimension-by-dimension HWENO mapper for SD AMR.
 *
  * Prolongation evaluates each reconstructed parent polynomial directly at
- * child solution points and applies a conservative sibling-wise positivity
- * limiter after every dimensional reconstruction. Restriction seeds the
- * complete target region with conservative L2 projection, applies HWENO only
- * to the target region with its outer coarse-cell ring removed, and limits
- * every resulting parent polynomial about the volume-weighted average of its
- * direct source children.
+ * child solution points and applies a sibling-wise positivity limiter after
+ * every dimensional reconstruction. Conservative and childwise modes preserve
+ * the parent average; raw-childwise mode intentionally does not. Restriction
+ * seeds the complete target region with conservative L2 projection, applies
+ * HWENO only to the target region with its outer coarse-cell ring removed, and
+ * limits every resulting parent polynomial about the volume-weighted average
+ * of its direct source children.
 */
 class HermiteWENO2D
     :
@@ -1481,7 +1482,8 @@ public:
     enum class ProlongWeightMode : int
     {
         Conservative = 0,
-        Childwise = 1
+        Childwise = 1,
+        RawChildwise = 2
     };
 
     Box CoarseBox (const Box& fine, int ratio) override;
@@ -1755,12 +1757,14 @@ private:
 
         pair.left = WeightedCubic(candidates, SmoothRegion::ChildLeft);
         pair.right = WeightedCubic(candidates, SmoothRegion::ChildRight);
-        const Real paired_average = Real(0.5) * (
-            ProlongChildAverage(pair.left, 0)
-            + ProlongChildAverage(pair.right, 1));
-        const Real correction = parent_average - paired_average;
-        pair.left[0] += correction;
-        pair.right[0] += correction;
+        if (mode == ProlongWeightMode::Childwise) {
+            const Real paired_average = Real(0.5) * (
+                ProlongChildAverage(pair.left, 0)
+                + ProlongChildAverage(pair.right, 1));
+            const Real correction = parent_average - paired_average;
+            pair.left[0] += correction;
+            pair.right[0] += correction;
+        }
         return pair;
     }
 

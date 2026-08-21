@@ -3069,7 +3069,8 @@ HermiteWENO2D::hweno_interp_y (int i, int j, int k, int n,
         const Real cons_abs = std::abs(ubar_parent - m0.ubar);
         const Real cons_rel = cons_abs / amrex::max(std::abs(m0.ubar), Real(1.0e-14));
 #if !defined(AMREX_USE_GPU)
-        if (cons_rel > Real(1.0e-10) && ParallelDescriptor::IOProcessor()) {
+        if (mode != ProlongWeightMode::RawChildwise
+            && cons_rel > Real(1.0e-10) && ParallelDescriptor::IOProcessor()) {
             static int warn_count_y = 0;
             if (warn_count_y < 12) {
                 amrex::Print() << "[HermiteWENO2D::hweno_interp_y] parent poly avg mismatch: "
@@ -3134,7 +3135,8 @@ HermiteWENO2D::hweno_interp_x (int i, int j, int k, int n,
         const Real cons_abs = std::abs(ubar_parent - m0.ubar);
         const Real cons_rel = cons_abs / amrex::max(std::abs(m0.ubar), Real(1.0e-14));
 #if !defined(AMREX_USE_GPU)
-        if (cons_rel > Real(1.0e-10) && ParallelDescriptor::IOProcessor()) {
+        if (mode != ProlongWeightMode::RawChildwise
+            && cons_rel > Real(1.0e-10) && ParallelDescriptor::IOProcessor()) {
             static int warn_count_x = 0;
             if (warn_count_x < 12) {
                 amrex::Print() << "[HermiteWENO2D::hweno_interp_x] parent poly avg mismatch: "
@@ -3378,9 +3380,12 @@ HermiteWENO2D::interp (const FArrayBox& crse,
     Box required_coarse_stencil = amrex::coarsen(full_fine_region, ratio);
     required_coarse_stencil.grow(IntVect(AMREX_D_DECL(1,1,0)));
     if (!crse.box().contains(required_coarse_stencil)) {
-        const char* mode_name =
-            prolong_weight_mode == ProlongWeightMode::Conservative
-            ? "conservative" : "childwise";
+        const char* mode_name = "raw_childwise";
+        if (prolong_weight_mode == ProlongWeightMode::Conservative) {
+            mode_name = "conservative";
+        } else if (prolong_weight_mode == ProlongWeightMode::Childwise) {
+            mode_name = "childwise";
+        }
         std::ostringstream message;
         message << "[HWENO_PROLONG_BOX_MISMATCH] rank="
                 << ParallelDescriptor::MyProc()

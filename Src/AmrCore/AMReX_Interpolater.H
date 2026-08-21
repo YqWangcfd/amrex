@@ -1653,13 +1653,38 @@ private:
             Real(3.0/8.0), Real(3.0/8.0), Real(1.0/8.0), Real(1.0/8.0)
         };
 
-        const Real diff = beta[0] - beta[3];
-        const Real tau = (diff >= Real(0.0)) ? diff : -diff;
+        // Reflection maps candidates (0,1,2,3) to (1,0,3,2).
+        const Real diff = (beta[0] + beta[1]) - (beta[2] + beta[3]);
+        const Real abs_diff = (diff >= Real(0.0)) ? diff : -diff;
+        const Real tau = Real(0.5) * abs_diff;
         GpuArray<Real,4> alpha{};
         Real sum_alpha = Real(0.0);
         for (int k = 0; k < 4; ++k) {
             const Real r = tau / (beta[k] + hweno_eps);
             alpha[k] = d[k] * (Real(1.0) + r * r); // p=2 fixed
+            sum_alpha += alpha[k];
+        }
+
+        const Real inv = Real(1.0) / amrex::max(sum_alpha, Real(1.0e-30));
+        GpuArray<Real,4> w{};
+        for (int k = 0; k < 4; ++k) {
+            w[k] = alpha[k] * inv;
+        }
+        return w;
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static GpuArray<Real,4> JSWeights (GpuArray<Real,4> const& beta) noexcept
+    {
+        constexpr GpuArray<Real,4> d = {
+            Real(3.0/8.0), Real(3.0/8.0), Real(1.0/8.0), Real(1.0/8.0)
+        };
+
+        GpuArray<Real,4> alpha{};
+        Real sum_alpha = Real(0.0);
+        for (int k = 0; k < 4; ++k) {
+            const Real inv_beta = Real(1.0) / (beta[k] + hweno_eps);
+            alpha[k] = d[k] * inv_beta * inv_beta; // Jiang-Shu, p=2
             sum_alpha += alpha[k];
         }
 
@@ -1686,7 +1711,7 @@ private:
         for (int k = 0; k < 4; ++k) {
             beta[k] = BetaFromCubic(candidates[k], region);
         }
-        const auto omega = ZWeights(beta);
+        const auto omega = JSWeights(beta);
 
         GpuArray<Real,4> result{};
         for (int degree = 0; degree < 4; ++degree) {

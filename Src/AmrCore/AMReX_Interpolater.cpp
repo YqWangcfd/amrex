@@ -3211,7 +3211,7 @@ HermiteWENO2D::hweno_restrict_y (int i, int j, int k, int n,
         for (int kk = 0; kk < 4; ++kk) {
             beta[kk] = BetaFromCubic(cand[kk], SmoothRegion::Parent);
         }
-        const auto omega = ZWeights(beta);
+        const auto omega = JSWeights(beta);
 
         GpuArray<Real,4> bH{};
         for (int m = 0; m < 4; ++m) {
@@ -3283,7 +3283,7 @@ HermiteWENO2D::hweno_restrict_x (int i, int j, int k, int n,
         for (int kk = 0; kk < 4; ++kk) {
             beta[kk] = BetaFromCubic(cand[kk], SmoothRegion::Parent);
         }
-        const auto omega = ZWeights(beta);
+        const auto omega = JSWeights(beta);
 
         GpuArray<Real,4> bH{};
         for (int m = 0; m < 4; ++m) {

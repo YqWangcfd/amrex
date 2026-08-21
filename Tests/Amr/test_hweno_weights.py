@@ -46,7 +46,7 @@ class TestHWENOWeights(unittest.TestCase):
         self.assertIn("static GpuArray<Real,4> JSWeights", header)
         self.assertIn("d[k] * inv_beta * inv_beta", header)
 
-    def test_prolong_uses_js_while_restriction_keeps_z(self):
+    def test_prolong_and_restriction_use_js_weights(self):
         header = HEADER.read_text(encoding="utf-8")
         weighted_start = header.index("static GpuArray<Real,4> WeightedCubic")
         weighted_end = header.index("static Real hweno_child_coordinate", weighted_start)
@@ -61,9 +61,9 @@ class TestHWENOWeights(unittest.TestCase):
         )
         restriction = source[restrict_start:restrict_end]
         self.assertEqual(
-            restriction.count("const auto omega = ZWeights(beta);"), 2
+            restriction.count("const auto omega = JSWeights(beta);"), 2
         )
-        self.assertNotIn("JSWeights(beta)", restriction)
+        self.assertNotIn("ZWeights(beta)", restriction)
 
 
 if __name__ == "__main__":

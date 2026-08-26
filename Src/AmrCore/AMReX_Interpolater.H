@@ -1521,6 +1521,7 @@ public:
     void configure_amr_transfer_pp (bool enabled, Real gamma,
                                     Real eps_rho, Real eps_p) noexcept;
     void configure_prolong_weight_mode (ProlongWeightMode mode) noexcept;
+    void configure_nonlinear_weights (bool enabled) noexcept;
     AMRProlongationPPCounters take_prolongation_pp_counters () noexcept;
     AMRRestrictionPPCounters take_restriction_pp_counters () noexcept;
 
@@ -1533,6 +1534,7 @@ private:
 
     bool m_prolongation_pp_enabled = false;
     ProlongWeightMode m_prolong_weight_mode = ProlongWeightMode::Conservative;
+    bool m_use_nonlinear_weights = true;
     Real m_pp_gamma = Real(1.4);
     Real m_pp_eps_rho = Real(1.0e-13);
     Real m_pp_eps_p = Real(1.0e-13);
@@ -1699,6 +1701,14 @@ private:
     }
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static constexpr GpuArray<Real,4> LinearWeights () noexcept
+    {
+        return {
+            Real(3.0/8.0), Real(3.0/8.0), Real(1.0/8.0), Real(1.0/8.0)
+        };
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     static Real EvalCubic (GpuArray<Real,4> const& b, Real xi) noexcept
     {
         return ((b[3]*xi + b[2])*xi + b[1])*xi + b[0];
@@ -1707,13 +1717,17 @@ private:
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     static GpuArray<Real,4> WeightedCubic (
         GpuArray<GpuArray<Real,4>,4> const& candidates,
-        SmoothRegion region) noexcept
+        SmoothRegion region,
+        bool use_nonlinear_weights) noexcept
     {
-        GpuArray<Real,4> beta{};
-        for (int k = 0; k < 4; ++k) {
-            beta[k] = BetaFromCubic(candidates[k], region);
+        auto omega = LinearWeights();
+        if (use_nonlinear_weights) {
+            GpuArray<Real,4> beta{};
+            for (int k = 0; k < 4; ++k) {
+                beta[k] = BetaFromCubic(candidates[k], region);
+            }
+            omega = JSWeights(beta);
         }
-        const auto omega = JSWeights(beta);
 
         GpuArray<Real,4> result{};
         for (int degree = 0; degree < 4; ++degree) {
@@ -1746,17 +1760,21 @@ private:
     static ProlongPolynomialPair BuildProlongPolynomialPair (
         GpuArray<GpuArray<Real,4>,4> const& candidates,
         Real parent_average,
-        ProlongWeightMode mode) noexcept
+        ProlongWeightMode mode,
+        bool use_nonlinear_weights) noexcept
     {
         ProlongPolynomialPair pair;
         if (mode == ProlongWeightMode::Conservative) {
-            pair.left = WeightedCubic(candidates, SmoothRegion::Parent);
+            pair.left = WeightedCubic(
+                candidates, SmoothRegion::Parent, use_nonlinear_weights);
             pair.right = pair.left;
             return pair;
         }
 
-        pair.left = WeightedCubic(candidates, SmoothRegion::ChildLeft);
-        pair.right = WeightedCubic(candidates, SmoothRegion::ChildRight);
+        pair.left = WeightedCubic(
+            candidates, SmoothRegion::ChildLeft, use_nonlinear_weights);
+        pair.right = WeightedCubic(
+            candidates, SmoothRegion::ChildRight, use_nonlinear_weights);
         if (mode == ProlongWeightMode::Childwise) {
             const Real paired_average = Real(0.5) * (
                 ProlongChildAverage(pair.left, 0)
@@ -1802,6 +1820,7 @@ private:
                                 Array4<Real const> const& srcarr,
                                 IntVect const& ratio,
                                 ProlongWeightMode mode,
+                                bool use_nonlinear_weights,
                                 Real hdir) noexcept;
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
@@ -1810,6 +1829,7 @@ private:
                                 Array4<Real const> const& srcarr,
                                 IntVect const& ratio,
                                 ProlongWeightMode mode,
+                                bool use_nonlinear_weights,
                                 Real hdir) noexcept;
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
@@ -1825,6 +1845,7 @@ private:
                                   Array4<Real> const& tmparr,
                                   Array4<Real const> const& srcarr,
                                   IntVect const& ratio,
+                                  bool use_nonlinear_weights,
                                   Real hfine,
                                   Real hcrse) noexcept;
 
@@ -1833,6 +1854,7 @@ private:
                                   Array4<Real> const& crsearr,
                                   Array4<Real const> const& srcarr,
                                   IntVect const& ratio,
+                                  bool use_nonlinear_weights,
                                   Real hfine,
                                   Real hcrse) noexcept;
 };

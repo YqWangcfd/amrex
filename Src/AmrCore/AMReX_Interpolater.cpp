@@ -3556,20 +3556,26 @@ HermiteWENO2D::interp (const FArrayBox& crse,
     IArrayBox intermediate_nonfinite(intermediate_parent_region, 1);
     intermediate_nonfinite.setVal(0);
     if (m_prolongation_pp_enabled) {
+        // The x-grown columns in intermediate_parent_region exist only to
+        // supply the following x-direction stencil.  Their coarse values can
+        // be physical/FAB ghost data and are not prolongation targets, so do
+        // not require an admissible gas-state average there.  Apply strict PP
+        // only to the actual target parents; the full intermediate region is
+        // checked for finiteness below.
+        AMREX_ASSERT(intermediate_parent_region.contains(parent_region));
         const auto y_counts = apply_parentwise_prolongation_pp(
-            tmpy, crse, intermediate_parent_region, crse_comp,
+            tmpy, crse, parent_region, crse_comp,
             intermediate_child_ratio, nvar, true, false,
             m_pp_gamma, m_pp_eps_rho, m_pp_eps_p, nullptr, runon);
         m_pp_rho_events.fetch_add(y_counts.rho);
         m_pp_pressure_events.fetch_add(y_counts.pressure);
         m_pp_any_events.fetch_add(y_counts.any);
         m_pp_nonfinite_events.fetch_add(y_counts.nonfinite);
-    } else {
-        const Long intermediate_nonfinite_count = hweno_check_intermediate_finite(
-            tmpy, crse, intermediate_parent_region, intermediate_child_ratio,
-            crse_comp, nvar, intermediate_nonfinite, runon);
-        m_pp_nonfinite_events.fetch_add(intermediate_nonfinite_count);
     }
+    const Long intermediate_nonfinite_count = hweno_check_intermediate_finite(
+        tmpy, crse, intermediate_parent_region, intermediate_child_ratio,
+        crse_comp, nvar, intermediate_nonfinite, runon);
+    m_pp_nonfinite_events.fetch_add(intermediate_nonfinite_count);
 
     srcarr = tmpy.const_array();
     FArrayBox raw_fine(full_fine_region, ncomp);

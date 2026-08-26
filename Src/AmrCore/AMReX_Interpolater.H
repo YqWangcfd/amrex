@@ -1522,6 +1522,7 @@ public:
                                     Real eps_rho, Real eps_p) noexcept;
     void configure_prolong_weight_mode (ProlongWeightMode mode) noexcept;
     void configure_nonlinear_weights (bool enabled) noexcept;
+    void configure_reconstruction_order (int order) noexcept;
     AMRProlongationPPCounters take_prolongation_pp_counters () noexcept;
     AMRRestrictionPPCounters take_restriction_pp_counters () noexcept;
 
@@ -1532,9 +1533,16 @@ private:
         GpuArray<Real,4> right{};
     };
 
+    struct ProlongPolynomialPair3
+    {
+        GpuArray<Real,3> left{};
+        GpuArray<Real,3> right{};
+    };
+
     bool m_prolongation_pp_enabled = false;
     ProlongWeightMode m_prolong_weight_mode = ProlongWeightMode::Conservative;
     bool m_use_nonlinear_weights = true;
+    int m_reconstruction_order = 4;
     Real m_pp_gamma = Real(1.4);
     Real m_pp_eps_rho = Real(1.0e-13);
     Real m_pp_eps_p = Real(1.0e-13);
@@ -1630,6 +1638,35 @@ private:
     }
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static GpuArray<GpuArray<Real,3>, 3> Build3Candidates (
+        Real um, Real u0, Real up,
+        Real gm, Real gp,
+        Real h) noexcept
+    {
+        const Real hg_m = h * gm;
+        const Real hg_p = h * gp;
+
+        GpuArray<GpuArray<Real,3>, 3> c{};
+
+        // p0: {u_{i-1}, u_i, g_{i-1}}
+        c[0][0] =  Real(1.0/12.0)*um + Real(11.0/12.0)*u0 + Real(1.0/12.0)*hg_m;
+        c[0][1] = -Real(2.0)*um + Real(2.0)*u0 - hg_m;
+        c[0][2] = -um + u0 - hg_m;
+
+        // p1: {u_{i-1}, u_i, u_{i+1}}
+        c[1][0] = -Real(1.0/24.0)*um + Real(13.0/12.0)*u0 - Real(1.0/24.0)*up;
+        c[1][1] = -Real(1.0/2.0)*um + Real(1.0/2.0)*up;
+        c[1][2] =  Real(1.0/2.0)*um - u0 + Real(1.0/2.0)*up;
+
+        // p2: {u_i, u_{i+1}, g_{i+1}}
+        c[2][0] =  Real(11.0/12.0)*u0 + Real(1.0/12.0)*up - Real(1.0/12.0)*hg_p;
+        c[2][1] = -Real(2.0)*u0 + Real(2.0)*up - hg_p;
+        c[2][2] =  u0 - up + hg_p;
+
+        return c;
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     static Real BetaFromCubic (GpuArray<Real,4> const& c, SmoothRegion region) noexcept
     {
         if (region == SmoothRegion::Parent) {
@@ -1648,6 +1685,19 @@ private:
              + sign*Real(1.0/2.0)*c[1]*c[2]
              + Real(1.0/4.0)*c[1]*c[3]
              + sign*Real(51.0/16.0)*c[2]*c[3];
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static Real BetaFromQuadratic (GpuArray<Real,3> const& c, SmoothRegion region) noexcept
+    {
+        if (region == SmoothRegion::Parent) {
+            return c[1]*c[1] + Real(13.0/3.0)*c[2]*c[2];
+        }
+
+        const Real sign = (region == SmoothRegion::ChildLeft) ? Real(-1.0) : Real(1.0);
+        return Real(1.0/2.0)*c[1]*c[1]
+             + Real(13.0/6.0)*c[2]*c[2]
+             + sign*Real(1.0/2.0)*c[1]*c[2];
     }
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
@@ -1701,6 +1751,29 @@ private:
     }
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static GpuArray<Real,3> JSWeights3 (GpuArray<Real,3> const& beta) noexcept
+    {
+        constexpr GpuArray<Real,3> d = {
+            Real(1.0/4.0), Real(1.0/2.0), Real(1.0/4.0)
+        };
+
+        GpuArray<Real,3> alpha{};
+        Real sum_alpha = Real(0.0);
+        for (int k = 0; k < 3; ++k) {
+            const Real inv_beta = Real(1.0) / (beta[k] + hweno_eps);
+            alpha[k] = d[k] * inv_beta * inv_beta;
+            sum_alpha += alpha[k];
+        }
+
+        const Real inv = Real(1.0) / amrex::max(sum_alpha, Real(1.0e-30));
+        GpuArray<Real,3> w{};
+        for (int k = 0; k < 3; ++k) {
+            w[k] = alpha[k] * inv;
+        }
+        return w;
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     static constexpr GpuArray<Real,4> LinearWeights () noexcept
     {
         return {
@@ -1709,9 +1782,21 @@ private:
     }
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static constexpr GpuArray<Real,3> LinearWeights3 () noexcept
+    {
+        return {Real(1.0/4.0), Real(1.0/2.0), Real(1.0/4.0)};
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     static Real EvalCubic (GpuArray<Real,4> const& b, Real xi) noexcept
     {
         return ((b[3]*xi + b[2])*xi + b[1])*xi + b[0];
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static Real EvalQuadratic (GpuArray<Real,3> const& b, Real xi) noexcept
+    {
+        return (b[2]*xi + b[1])*xi + b[0];
     }
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
@@ -1739,6 +1824,30 @@ private:
     }
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static GpuArray<Real,3> WeightedQuadratic (
+        GpuArray<GpuArray<Real,3>,3> const& candidates,
+        SmoothRegion region,
+        bool use_nonlinear_weights) noexcept
+    {
+        auto omega = LinearWeights3();
+        if (use_nonlinear_weights) {
+            GpuArray<Real,3> beta{};
+            for (int k = 0; k < 3; ++k) {
+                beta[k] = BetaFromQuadratic(candidates[k], region);
+            }
+            omega = JSWeights3(beta);
+        }
+
+        GpuArray<Real,3> result{};
+        for (int degree = 0; degree < 3; ++degree) {
+            for (int k = 0; k < 3; ++k) {
+                result[degree] += omega[k] * candidates[k][degree];
+            }
+        }
+        return result;
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
     static Real hweno_child_coordinate (int child, int solution_point) noexcept
     {
         return (xi_sol[solution_point] + Real(2*child - 1)) / Real(4.0);
@@ -1751,6 +1860,18 @@ private:
         Real average = Real(0.0);
         for (int s = 0; s < sd_order_hweno; ++s) {
             average += sd5_w0[s] * EvalCubic(
+                polynomial, hweno_child_coordinate(child, s));
+        }
+        return average;
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static Real ProlongChildAverage3 (
+        GpuArray<Real,3> const& polynomial, int child) noexcept
+    {
+        Real average = Real(0.0);
+        for (int s = 0; s < sd_order_hweno; ++s) {
+            average += sd5_w0[s] * EvalQuadratic(
                 polynomial, hweno_child_coordinate(child, s));
         }
         return average;
@@ -1779,6 +1900,36 @@ private:
             const Real paired_average = Real(0.5) * (
                 ProlongChildAverage(pair.left, 0)
                 + ProlongChildAverage(pair.right, 1));
+            const Real correction = parent_average - paired_average;
+            pair.left[0] += correction;
+            pair.right[0] += correction;
+        }
+        return pair;
+    }
+
+    AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
+    static ProlongPolynomialPair3 BuildProlongPolynomialPair3 (
+        GpuArray<GpuArray<Real,3>,3> const& candidates,
+        Real parent_average,
+        ProlongWeightMode mode,
+        bool use_nonlinear_weights) noexcept
+    {
+        ProlongPolynomialPair3 pair;
+        if (mode == ProlongWeightMode::Conservative) {
+            pair.left = WeightedQuadratic(
+                candidates, SmoothRegion::Parent, use_nonlinear_weights);
+            pair.right = pair.left;
+            return pair;
+        }
+
+        pair.left = WeightedQuadratic(
+            candidates, SmoothRegion::ChildLeft, use_nonlinear_weights);
+        pair.right = WeightedQuadratic(
+            candidates, SmoothRegion::ChildRight, use_nonlinear_weights);
+        if (mode == ProlongWeightMode::Childwise) {
+            const Real paired_average = Real(0.5) * (
+                ProlongChildAverage3(pair.left, 0)
+                + ProlongChildAverage3(pair.right, 1));
             const Real correction = parent_average - paired_average;
             pair.left[0] += correction;
             pair.right[0] += correction;
@@ -1821,6 +1972,7 @@ private:
                                 IntVect const& ratio,
                                 ProlongWeightMode mode,
                                 bool use_nonlinear_weights,
+                                int reconstruction_order,
                                 Real hdir) noexcept;
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
@@ -1830,6 +1982,7 @@ private:
                                 IntVect const& ratio,
                                 ProlongWeightMode mode,
                                 bool use_nonlinear_weights,
+                                int reconstruction_order,
                                 Real hdir) noexcept;
 
     AMREX_GPU_HOST_DEVICE AMREX_FORCE_INLINE
@@ -1846,6 +1999,7 @@ private:
                                   Array4<Real const> const& srcarr,
                                   IntVect const& ratio,
                                   bool use_nonlinear_weights,
+                                  int reconstruction_order,
                                   Real hfine,
                                   Real hcrse) noexcept;
 
@@ -1855,6 +2009,7 @@ private:
                                   Array4<Real const> const& srcarr,
                                   IntVect const& ratio,
                                   bool use_nonlinear_weights,
+                                  int reconstruction_order,
                                   Real hfine,
                                   Real hcrse) noexcept;
 };

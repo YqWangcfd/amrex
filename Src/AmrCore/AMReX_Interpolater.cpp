@@ -3032,6 +3032,7 @@ HermiteWENO2D::hweno_interp_y (int i, int j, int k, int n,
                                IntVect const& ratio,
                                ProlongWeightMode mode,
                                bool use_nonlinear_weights,
+                               int reconstruction_order,
                                Real hdir) noexcept
 {
     // In d-by-d interp(), y-stage loops over `by`, where x-index is already coarse.
@@ -3059,6 +3060,40 @@ HermiteWENO2D::hweno_interp_y (int i, int j, int k, int n,
         const auto mm = NodalToMoments1D(Um.data(), hdir);
         const auto m0 = NodalToMoments1D(U0.data(), hdir);
         const auto mp = NodalToMoments1D(Up.data(), hdir);
+        if (reconstruction_order == 3) {
+            const auto cand = Build3Candidates(
+                mm.ubar, m0.ubar, mp.ubar, mm.g1, mp.g1, hdir);
+            const auto pair = BuildProlongPolynomialPair3(
+                cand, m0.ubar, mode, use_nonlinear_weights);
+            const auto& polynomial = (child == 0) ? pair.left : pair.right;
+            const Real ubar_parent = Real(0.5) * (
+                ProlongChildAverage3(pair.left, 0)
+                + ProlongChildAverage3(pair.right, 1));
+            const Real cons_abs = std::abs(ubar_parent - m0.ubar);
+            const Real cons_rel = cons_abs
+                / amrex::max(std::abs(m0.ubar), Real(1.0e-14));
+#if !defined(AMREX_USE_GPU)
+            if (mode != ProlongWeightMode::RawChildwise
+                && cons_rel > Real(1.0e-10) && ParallelDescriptor::IOProcessor()) {
+                static int warn_count_y3 = 0;
+                if (warn_count_y3 < 12) {
+                    amrex::Print()
+                        << "[HermiteWENO2D::hweno_interp_y/order3] parent poly avg mismatch: "
+                        << "abs=" << cons_abs << ", rel=" << cons_rel
+                        << ", coarse=(" << ic << "," << jc << "), child=" << child
+                        << ", line=" << line << ", var=" << n << "\n";
+                    ++warn_count_y3;
+                }
+            }
+#endif
+            for (int s = 0; s < sd_order_hweno; ++s) {
+                const int off = box2point(line, s, 0, n);
+                tmparr(i, j, k, off) = EvalQuadratic(
+                    polynomial, hweno_child_coordinate(child, s));
+            }
+            continue;
+        }
+
         const auto cand = Build4Candidates(mm.ubar, m0.ubar, mp.ubar,
                                            mm.g1, mp.g1, mm.g2, mp.g2, hdir);
 
@@ -3101,6 +3136,7 @@ HermiteWENO2D::hweno_interp_x (int i, int j, int k, int n,
                                IntVect const& ratio,
                                ProlongWeightMode mode,
                                bool use_nonlinear_weights,
+                               int reconstruction_order,
                                Real hdir) noexcept
 {
     const int ic = amrex::coarsen(i, ratio[0]);
@@ -3127,6 +3163,40 @@ HermiteWENO2D::hweno_interp_x (int i, int j, int k, int n,
         const auto mm = NodalToMoments1D(Um.data(), hdir);
         const auto m0 = NodalToMoments1D(U0.data(), hdir);
         const auto mp = NodalToMoments1D(Up.data(), hdir);
+        if (reconstruction_order == 3) {
+            const auto cand = Build3Candidates(
+                mm.ubar, m0.ubar, mp.ubar, mm.g1, mp.g1, hdir);
+            const auto pair = BuildProlongPolynomialPair3(
+                cand, m0.ubar, mode, use_nonlinear_weights);
+            const auto& polynomial = (child == 0) ? pair.left : pair.right;
+            const Real ubar_parent = Real(0.5) * (
+                ProlongChildAverage3(pair.left, 0)
+                + ProlongChildAverage3(pair.right, 1));
+            const Real cons_abs = std::abs(ubar_parent - m0.ubar);
+            const Real cons_rel = cons_abs
+                / amrex::max(std::abs(m0.ubar), Real(1.0e-14));
+#if !defined(AMREX_USE_GPU)
+            if (mode != ProlongWeightMode::RawChildwise
+                && cons_rel > Real(1.0e-10) && ParallelDescriptor::IOProcessor()) {
+                static int warn_count_x3 = 0;
+                if (warn_count_x3 < 12) {
+                    amrex::Print()
+                        << "[HermiteWENO2D::hweno_interp_x/order3] parent poly avg mismatch: "
+                        << "abs=" << cons_abs << ", rel=" << cons_rel
+                        << ", coarse=(" << ic << "," << jc << "), child=" << child
+                        << ", line=" << line << ", var=" << n << "\n";
+                    ++warn_count_x3;
+                }
+            }
+#endif
+            for (int s = 0; s < sd_order_hweno; ++s) {
+                const int off = box2point(s, line, 0, n);
+                finearr(i, j, k, off) = EvalQuadratic(
+                    polynomial, hweno_child_coordinate(child, s));
+            }
+            continue;
+        }
+
         const auto cand = Build4Candidates(mm.ubar, m0.ubar, mp.ubar,
                                            mm.g1, mp.g1, mm.g2, mp.g2, hdir);
 
@@ -3168,6 +3238,7 @@ HermiteWENO2D::hweno_restrict_y (int i, int j, int k, int n,
                                  Array4<Real const> const& srcarr,
                                  IntVect const& ratio,
                                  bool use_nonlinear_weights,
+                                 int reconstruction_order,
                                  Real hfine,
                                  Real hcrse) noexcept
 {
@@ -3210,6 +3281,19 @@ HermiteWENO2D::hweno_restrict_y (int i, int j, int k, int n,
         const auto rin = BuildRestrictInput1D(m_m5q4, m_m3q4, m_m1q4,
                                               m_p1q4, m_p3q4, m_p5q4);
 
+        if (reconstruction_order == 3) {
+            const auto cand = Build3Candidates(
+                rin.Ujm1, rin.Uj, rin.Ujp1,
+                rin.Gjm1_1, rin.Gjp1_1, hcrse);
+            const auto bH = WeightedQuadratic(
+                cand, SmoothRegion::Parent, use_nonlinear_weights);
+            for (int s = 0; s < sd_order_hweno; ++s) {
+                const int off = box2point(line, s, 0, n);
+                tmparr(i, j, k, off) = EvalQuadratic(bH, xi_sol[s]/2.0);
+            }
+            continue;
+        }
+
         const auto cand = Build4Candidates(rin.Ujm1, rin.Uj, rin.Ujp1,
                                            rin.Gjm1_1, rin.Gjp1_1,
                                            rin.Gjm1_2, rin.Gjp1_2, hcrse);
@@ -3244,6 +3328,7 @@ HermiteWENO2D::hweno_restrict_x (int i, int j, int k, int n,
                                  Array4<Real const> const& srcarr,
                                  IntVect const& ratio,
                                  bool use_nonlinear_weights,
+                                 int reconstruction_order,
                                  Real hfine,
                                  Real hcrse) noexcept
 {
@@ -3285,6 +3370,19 @@ HermiteWENO2D::hweno_restrict_x (int i, int j, int k, int n,
         const auto m_p5q4 = NodalToMoments1D(Up1.data(), hfine);
         const auto rin = BuildRestrictInput1D(m_m5q4, m_m3q4, m_m1q4,
                                               m_p1q4, m_p3q4, m_p5q4);
+
+        if (reconstruction_order == 3) {
+            const auto cand = Build3Candidates(
+                rin.Ujm1, rin.Uj, rin.Ujp1,
+                rin.Gjm1_1, rin.Gjp1_1, hcrse);
+            const auto bH = WeightedQuadratic(
+                cand, SmoothRegion::Parent, use_nonlinear_weights);
+            for (int s = 0; s < sd_order_hweno; ++s) {
+                const int off = box2point(s, line, 0, n);
+                crsearr(i, j, k, off) = EvalQuadratic(bH, xi_sol[s]/2.0);
+            }
+            continue;
+        }
 
         const auto cand = Build4Candidates(rin.Ujm1, rin.Uj, rin.Ujp1,
                                            rin.Gjm1_1, rin.Gjp1_1,
@@ -3333,6 +3431,15 @@ void
 HermiteWENO2D::configure_nonlinear_weights (bool enabled) noexcept
 {
     m_use_nonlinear_weights = enabled;
+}
+
+void
+HermiteWENO2D::configure_reconstruction_order (int order) noexcept
+{
+    AMREX_ALWAYS_ASSERT_WITH_MESSAGE(
+        order == 3 || order == 4,
+        "HermiteWENO2D reconstruction order must be 3 or 4.");
+    m_reconstruction_order = order;
 }
 
 AMRProlongationPPCounters
@@ -3395,6 +3502,7 @@ HermiteWENO2D::interp (const FArrayBox& crse,
     const int nvar = ncomp / sd_space_hweno;
     const auto prolong_weight_mode = m_prolong_weight_mode;
     const bool use_nonlinear_weights = m_use_nonlinear_weights;
+    const int reconstruction_order = m_reconstruction_order;
 
     Box required_coarse_stencil = amrex::coarsen(full_fine_region, ratio);
     required_coarse_stencil.grow(IntVect(AMREX_D_DECL(1,1,0)));
@@ -3439,7 +3547,7 @@ HermiteWENO2D::interp (const FArrayBox& crse,
     {
         hweno_interp_y(
             i, j, k, n, tmpyarr, srcarr, ratio, prolong_weight_mode,
-            use_nonlinear_weights, hy);
+            use_nonlinear_weights, reconstruction_order, hy);
     });
 
     const Box intermediate_parent_region = amrex::coarsen(
@@ -3475,7 +3583,7 @@ HermiteWENO2D::interp (const FArrayBox& crse,
     {
         hweno_interp_x(
             i, j, k, n, raw, srcarr, ratio, prolong_weight_mode,
-            use_nonlinear_weights, hx);
+            use_nonlinear_weights, reconstruction_order, hx);
     });
 
     const auto counts = apply_parentwise_prolongation_pp(
@@ -3534,6 +3642,7 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
     bool run_on_gpu = (runon == RunOn::Gpu && Gpu::inLaunchRegion());
     amrex::ignore_unused(run_on_gpu);
     const bool use_nonlinear_weights = m_use_nonlinear_weights;
+    const int reconstruction_order = m_reconstruction_order;
     Array4<Real const> const& finearr = fine.const_array(fine_comp);
     Array4<Real>       const& crsearr = crse.array(crse_comp);
 
@@ -3601,7 +3710,7 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
     {
         hweno_restrict_y(
             i, j, k, n, tmpyarr, srcarr, ratio,
-            use_nonlinear_weights, hy_f, hy_c);
+            use_nonlinear_weights, reconstruction_order, hy_f, hy_c);
     });
     const IntVect y_source_ratio(AMREX_D_DECL(1,ratio[1],1));
 #if (AMREX_SPACEDIM == 2)
@@ -3636,7 +3745,7 @@ HermiteWENO2D::restrict (const FArrayBox& fine,
     {
         hweno_restrict_x(
             i, j, k, n, crsearr, srcarr, ratio,
-            use_nonlinear_weights, hx_f, hx_c);
+            use_nonlinear_weights, reconstruction_order, hx_f, hx_c);
     });
     const IntVect x_source_ratio(AMREX_D_DECL(ratio[0],1,1));
     const auto x_counts = apply_restriction_positivity(
